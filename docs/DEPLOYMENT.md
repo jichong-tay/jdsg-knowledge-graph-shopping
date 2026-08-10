@@ -58,7 +58,7 @@ The bootstrap script creates:
 
 ~~~text
 /opt/shopping-app/          application checkout and .venv, owned by the administrator
-/var/lib/shopping-app/      private database and archived email, owned by shopping-app
+/var/lib/shopping-app/      private session key, database, and archived email, owned by shopping-app
 /var/backups/shopping-app/  root-only pre-deployment SQLite backups
 /etc/shopping-app/app.env   production configuration
 ~~~

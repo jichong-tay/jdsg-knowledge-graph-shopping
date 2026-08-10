@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 from app.ingestion import import_eml
@@ -10,6 +11,10 @@ from app.web import create_app
 def test_dashboard_health_and_order_page(settings, fixture_dir: Path) -> None:
     result = import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
     app = create_app(settings)
+
+    session_key = settings.data_dir / ".sesskey"
+    assert session_key.exists()
+    assert stat.S_IMODE(session_key.stat().st_mode) == 0o600
 
     with app.get_testclient() as client:
         dashboard = client.get("/")

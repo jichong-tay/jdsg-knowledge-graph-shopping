@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fasthtml.common import (
@@ -83,7 +84,9 @@ def _layout(title: str, *content: Any) -> Any:
 def create_app(settings: Settings):
     runtime = assert_supported_runtime(enforce_safe_sqlite=settings.enforce_safe_sqlite)
     assert_schema_current(settings.database_path, settings.migrations_dir)
-    app, _ = fast_app()
+    session_key_path = settings.data_dir / ".sesskey"
+    app, _ = fast_app(key_fname=str(session_key_path))
+    os.chmod(session_key_path, 0o600)
     app.state.settings = settings
 
     @app.get("/")  # pyright: ignore[reportAttributeAccessIssue]

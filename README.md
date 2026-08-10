@@ -130,6 +130,7 @@ test suite.
 
 ~~~text
 data/
+├── .sesskey                    # private FastHTML session-signing key
 ├── shopping.sqlite3
 └── raw-email/
     ├── manual/
@@ -137,8 +138,8 @@ data/
     └── gmail/                 # planned
 ~~~
 
-Private directories are created with mode 0700 and archived email/database files
-with mode 0600 where the platform permits it.
+Private directories are created with mode 0700 and the session key, archived
+email, and database files with mode 0600 where the platform permits it.
 
 ## Runtime safety
 
