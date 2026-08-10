@@ -1,7 +1,51 @@
 [project]
 name = "jdsg-knowledge-graph-shopping"
 version = "0.1.0"
-description = "Add your description here"
+description = "Private local shopping intelligence and knowledge-graph application"
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = []
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "python-fasthtml>=0.14.9,<0.15",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.scripts]
+shopping = "app.cli:main"
+
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+  "detect-secrets==1.5.0",
+  "hatchling==1.31.0",
+  "pyright>=1.1.400,<2",
+  "pytest>=8.4,<10",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.uv]
+required-version = "==0.12.3"
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+include = ["app", "tests", "main.py", "deploy/sqlite_backup.py"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "UP"]

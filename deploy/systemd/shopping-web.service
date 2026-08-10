@@ -1,0 +1,29 @@
+[Unit]
+Description=Shopping Intelligence web application
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=shopping-app
+Group=shopping-app
+WorkingDirectory=/opt/shopping-app
+EnvironmentFile=/etc/shopping-app/app.env
+ExecStart=/opt/shopping-app/.venv/bin/shopping serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/shopping-app
+
+[Install]
+WantedBy=multi-user.target

@@ -1,21 +1,23 @@
-# Local Grocery Intelligence — MVP Plan
+# Local Shopping Intelligence — MVP Plan
 
-Status: design baseline  
+Status: first vertical slice implemented; remaining milestones are planned
 Target host: Ubuntu, i5-3570K, 16 GB RAM, RTX 3060 12 GB  
 Primary user: one household/user  
-Primary retailer: NTUC FairPrice  
+Initial data source: one frequently used online grocery retailer
 
 ## 1. MVP outcome
 
-The MVP should reliably turn forwarded NTUC transaction emails into a private purchase history, answer questions about that history through a local chatbot, calculate simple replenishment predictions, display graph relationships, and send a daily Telegram alert when an item is likely due.
+The MVP should reliably turn supported retailer transaction emails into a private shopping history, answer questions about that history through a local chatbot, calculate replenishment predictions for repeat-consumable items, display graph relationships, and send a daily Telegram alert when an item is likely due. Durable purchases remain searchable without generating inappropriate replenishment alerts.
 
 The LLM is not the database and is not the forecasting engine. SQLite is authoritative; Python calculates predictions; the LLM selects tools and explains their results.
+
+Implementation as of 10 August 2026: the Python 3.14 project, migration runner, ingestion schema, exact-byte archive, vendor-adapter boundary, deterministic first-retailer parser, idempotent manual import, current-order FastHTML pages, health endpoint, and local test suite work against irreversibly sanitised fixtures shaped from private samples. GitHub-hosted CI is configured and awaits its first pushed run. Private source emails remain ignored and must never enter the public test suite. A one-time Ubuntu bootstrap script and simple in-place deployment helper are included but have not run on the homelab. Gmail OAuth, analytics, graph generation, Ollama, chat, Telegram, and off-machine backup remain unimplemented milestones.
 
 ```mermaid
 flowchart TB
     A["Dedicated Gmail mailbox"] --> B["Gmail API poller"]
     B --> C["Raw .eml archive"]
-    B --> D["Deterministic NTUC parser"]
+    B --> D["Vendor parser dispatcher"]
     D --> E["SQLite source of truth"]
     E --> F["Python analytics"]
     E --> G["Graph projection"]
@@ -31,12 +33,13 @@ flowchart TB
 
 | Concern | MVP choice | Reason |
 |---|---|---|
-| Runtime | Python 3.12 managed by `uv` | Matches the learning goal and keeps setup reproducible. |
+| Runtime | Python 3.14 managed by `uv` | Matches the repository configuration and keeps setup reproducible. |
+| Environments | `development` on the MacBook and in isolated automated checks; `production` on Ubuntu | Two profiles match the actual workflow without a separate staging or test configuration. |
 | Model server | Ollama | Separate, local model process with streaming and tool calling. |
 | Main model | `gemma4:12b-it-q4_K_M` | The 7.6 GB quantization fits the 12 GB RTX 3060 and has native function calling and system-prompt support. |
 | Comparison model | `qwen3.5:9b-q4_K_M` | A smaller 6.6 GB fallback and useful A/B benchmark for tool accuracy and speed. |
 | Model context | 8,192 tokens initially | Enough for the tool schemas and short chat history without forcing CPU spill. |
-| Database | SQLite in WAL mode | Simple, inspectable, local, and appropriate for fewer than five users with brief writes. |
+| Database | SQLite, using WAL only on a patched runtime | Simple, inspectable, local, and appropriate for fewer than five users with brief writes. |
 | Database access | Python `sqlite3` plus versioned SQL migrations | Keeps the schema and SQL visible while learning; no ORM is required. |
 | Validation | Pydantic v2 | Strict boundaries for parser, tool, and API inputs/outputs. |
 | UI | FastHTML + HTMX | Server-rendered interface with minimal JavaScript. |
@@ -44,6 +47,8 @@ flowchart TB
 | Programmatic API | FastAPI mounted at `/api` | Useful for health, import, order, prediction, and future mobile endpoints. |
 | Email access | Gmail API with OAuth and `gmail.readonly` | Least-privilege mailbox access; local Gmail message IDs provide idempotency. |
 | Scheduling | Two `systemd` timers | No Redis or job broker: frequent ingestion and one daily prediction/alert run. |
+| Deployment | Native `uv` environment + `systemd` | Reproducible Mac-to-Ubuntu releases without container or GPU-runtime complexity. |
+| CI/CD | GitHub-hosted CI + manual SSH deployment | Public-repository validation stays on disposable hosted runners; no repository workflow executes inside the homelab. |
 | Notification | Telegram Bot API | Straightforward HTTP API and reliable personal push notifications. |
 | Remote UI | Tailscale Serve to a localhost-bound app | Phone access without making the service public. |
 | Graph operations | SQLite graph projection + NetworkX when traversal is needed | Exact application-owned nodes and edges remain queryable independent of Graphify. |
@@ -61,17 +66,21 @@ This application's workload is SQLite-friendly:
 - All processes and the database file run on the same Ubuntu machine; the SQLite file is never placed on a network filesystem.
 - The application is single-instance and the expected database is far below SQLite's practical size limits.
 
-SQLite WAL mode allows readers and a writer to operate at the same time, although SQLite still permits only one writer at an instant. That limitation is acceptable here because short writes can queue briefly. It avoids a separate database server, credentials, ports, upgrades, and backup procedures while keeping the data inspectable and portable.
+On a patched runtime, SQLite WAL mode allows readers and a writer to operate at the same time, although SQLite still permits only one writer at an instant. That limitation is acceptable here because short writes can queue briefly. An affected development SQLite build is forced into the rollback journal, and health remains not ready; production refuses to start until the runtime is patched. SQLite avoids a separate database server, credentials, ports, upgrades, and backup procedures while keeping the data inspectable and portable.
+
+The application must verify and expose both `sys.version` and `sqlite3.sqlite_version` through `/api/health`. Because multiple local processes will use WAL, deployment requires a SQLite build containing the WAL-reset corruption fix: SQLite 3.51.3 or newer, or a fixed backport such as 3.50.7 or 3.44.6. Startup must fail with a clear diagnostic when the runtime SQLite build is known to be affected.
 
 Operating rules for reliable concurrency:
 
 1. Open a connection for a database operation and return/close it promptly; never reserve one connection for the lifetime of a WebSocket.
-2. Initialize every connection with `foreign_keys=ON` and `busy_timeout=5000`; keep the database in WAL mode.
+2. Initialize every connection with `foreign_keys=ON` and `busy_timeout=5000`; select WAL only when the runtime contains the required fix, otherwise select the rollback journal for development.
 3. Never hold a transaction while waiting for Ollama, Gmail, Graphify, Telegram, or user input.
 4. Parse email and generate LLM output outside a transaction, then perform the final database changes in one short transaction.
 5. Run one Uvicorn application worker initially. Its async server can handle the small number of browser/WebSocket users; synchronous repository work is dispatched without blocking the event loop.
 6. Keep scheduled recomputation transactions bounded. Large calculations read into memory first and persist results in a short transaction.
 7. Treat `database is locked` after the configured wait as an observable error and retry a bounded number of times rather than hiding it.
+8. Create each `sqlite3` connection inside the thread that uses it; never pass a default connection between request/worker threads.
+9. Back up a live database with Python's SQLite backup API, never by copying only `shopping.sqlite3` while WAL mode is active.
 
 The initial operating envelope is:
 
@@ -86,6 +95,8 @@ The initial operating envelope is:
 
 Move to PostgreSQL when there is measured evidence of sustained concurrent writes, recurring lock timeouts despite short transactions, multiple application instances/hosts, or a requirement for clients to access the database directly over a network. The repository/service boundary and versioned migrations are intentionally designed to make that later migration contained.
 
+The fewer-than-five-user assumption means trusted browser/device sessions sharing one household dataset. It does not provide per-person ownership or privacy. Add `users`, `households`, membership, and row ownership before supporting separate untrusted accounts.
+
 Do not add LangChain, LlamaIndex, a vector database, Redis, Celery, Neo4j, or Docker to the MVP. Each can be evaluated later against a demonstrated need.
 
 ### Ollama runtime settings
@@ -95,6 +106,7 @@ Start with one loaded model and one request at a time:
 ```text
 model: gemma4:12b-it-q4_K_M
 num_ctx: 8192
+num_predict: 768
 temperature for tool routing: 0.1
 temperature for ambiguous normalization: 0.0
 OLLAMA_NUM_PARALLEL: 1
@@ -109,17 +121,22 @@ Use deterministic parsing before the LLM. The model should only resolve ambiguou
 
 ## 3. Gmail design
 
-Create an ordinary dedicated Gmail mailbox, for example `my.grocery.inbox@...`. This is not a Google Cloud service account. A Cloud service account cannot directly read a consumer Gmail user's mailbox; impersonation requires a managed Google Workspace domain and administrator-granted domain-wide delegation.
+Create an ordinary dedicated Gmail mailbox, for example `my.shopping.inbox@...`. This is not a Google Cloud service account. A Cloud service account cannot directly read a consumer Gmail user's mailbox; impersonation requires a managed Google Workspace domain and administrator-granted domain-wide delegation.
 
 Recommended flow:
 
-1. Automatically forward new NTUC/FairPrice messages from the personal mailbox to the dedicated mailbox using a narrow Gmail filter.
+1. Automatically forward messages from supported retailers from the personal mailbox to the dedicated mailbox using narrow Gmail filters.
 2. Backfill old transactions. Preserve them as `.eml` attachments when possible; the parser must also support ordinary inline forwarded messages.
 3. Authorize the Ubuntu application once through the Gmail OAuth desktop flow.
 4. Store the resulting refresh token outside Git with owner-only file permissions.
-5. Poll every five minutes with a Gmail search query restricted by known sender/subject patterns.
-6. Fetch each candidate in RAW format and archive the decoded RFC 2822 message before parsing.
-7. Deduplicate first by Gmail message ID and then by `(retailer, external_order_id)`.
+5. Poll every five minutes with a Gmail search query restricted by known sender/subject patterns, following every `nextPageToken` until exhausted.
+6. Persist a Gmail history cursor when available. Also retain a timestamp watermark and overlap window so a full-search fallback safely rechecks recent messages.
+7. Fetch each candidate in RAW format and derive both an outer Gmail ID and an inner/original-message or transaction fingerprint.
+8. Authenticate the configured forwarding provenance using Gmail metadata and preserved authentication/ARC evidence where available. An inner `From` header alone is never authentication; unverifiable automatic messages enter review.
+9. Archive the decoded RFC 2822 message before parsing using temporary file → `fsync` → atomic rename.
+10. Deduplicate by Gmail message ID, original-content fingerprint, and finally `(retailer, external_order_id, revision fingerprint)`.
+11. Classify retries separately for rate limiting, temporary Gmail failure, revoked/expired OAuth, malformed MIME, unverified provenance, and unsupported retailer layout.
+12. Reconcile the raw archive and database periodically so a crash between file and database operations can be repaired in either direction.
 
 The initial OAuth scope is `https://www.googleapis.com/auth/gmail.readonly`. Because processing state is kept locally, the app does not need permission to modify Gmail labels. If mailbox labels become operationally useful later, explicitly migrate to `gmail.modify`.
 
@@ -127,21 +144,38 @@ Raw files live under this untracked structure:
 
 ```text
 data/
-├── grocery.sqlite3
-├── raw-email/YYYY/MM/<gmail-message-id>.eml
-└── extracted-email/YYYY/MM/<gmail-message-id>.html
+├── shopping.sqlite3
+└── raw-email/
+    ├── manual/<sha256-prefix>/<sha256>.eml
+    └── gmail/<sha256-prefix>/<sha256>.eml    # planned
 ```
 
-The raw message is the audit record. Re-running a newer parser against the same raw input must be possible without accessing Gmail again.
+The raw message is the audit record. Re-running a newer parser against the same raw input must be possible without accessing Gmail again. Health output includes the last successful poll, cursor/watermark, messages scanned, messages imported, and current OAuth status. OAuth authorization is configured for production use where applicable; testing-mode token expiry must be detected and surfaced.
 
-## 4. Exact SQLite schema
+### Private-data policy
+
+- Run the application under a dedicated unprivileged Unix account.
+- Use `0700` for private data directories and `0600` for raw email, databases, OAuth credentials, and backups.
+- Do not render archived retailer HTML directly. Parse it as untrusted input, strip scripts/event handlers, and never load remote images or tracking URLs.
+- Do not persist a separate extracted HTML copy unless a parser fixture or debugging case requires it; the raw `.eml` remains authoritative.
+- Keep backups encrypted, define retention, and test restore. Use the SQLite backup API for the database and an encrypted file backup for raw email.
+- Load Gmail and Telegram secrets with systemd credentials or equivalently restricted files, not committed `.env` files.
+- Telegram is an external disclosure channel. Alerts contain only the minimum product/due information and never names, addresses, order IDs, or tracking links.
+
+## 4. Exact target SQLite schema
+
+This is the cumulative target schema. It is delivered through staged migrations rather than as one oversized initial migration.
 
 Conventions:
 
 - Money is stored as integer cents, never floating-point dollars.
 - Timestamps are UTC ISO-8601 text; the UI displays Asia/Singapore time.
+- `ordered_at` remains null when a retailer email proves only its own sent time; the
+  source event timestamp is retained separately and is never relabelled as an order fact.
+- Charged tax and informational tax already included in the total are stored separately;
+  miscellaneous positive fees are not folded into a named service fee.
 - IDs are SQLite integer primary keys except stable graph node/edge identifiers.
-- JSON columns contain valid JSON text and are validated at the Python boundary.
+- JSON columns contain valid JSON text and are checked by SQLite as well as validated at the Python boundary.
 - `EXTRACTED` means directly present in source email, `DERIVED` means deterministic Python output, `INFERRED` means an LLM conclusion, and `MANUAL` means user-confirmed knowledge.
 
 ```sql
@@ -152,23 +186,42 @@ PRAGMA busy_timeout = 5000;
 CREATE TABLE schema_migrations (
     version       INTEGER PRIMARY KEY,
     name          TEXT NOT NULL,
-    applied_at    TEXT NOT NULL
+    checksum      TEXT NOT NULL,
+    started_at    TEXT NOT NULL,
+    applied_at    TEXT,
+    is_dirty      INTEGER NOT NULL DEFAULT 1 CHECK (is_dirty IN (0,1)),
+    CHECK ((is_dirty = 1 AND applied_at IS NULL) OR
+           (is_dirty = 0 AND applied_at IS NOT NULL))
 ) STRICT;
+
+CREATE TABLE email_sync_state (
+    account_key          TEXT PRIMARY KEY,
+    gmail_history_id     TEXT,
+    scan_watermark_at    TEXT NOT NULL,
+    overlap_seconds      INTEGER NOT NULL DEFAULT 86400 CHECK (overlap_seconds >= 0),
+    last_success_at      TEXT,
+    last_error_at        TEXT,
+    last_error           TEXT,
+    updated_at           TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE email_messages (
     id                   INTEGER PRIMARY KEY,
-    gmail_message_id     TEXT NOT NULL UNIQUE,
+    source_kind          TEXT NOT NULL CHECK (source_kind IN ('manual','gmail')),
+    source_message_key   TEXT NOT NULL UNIQUE,
+    gmail_message_id     TEXT,
     gmail_thread_id      TEXT,
     rfc822_message_id    TEXT,
     original_message_id  TEXT,
+    source_fingerprint   TEXT NOT NULL,
     sender               TEXT NOT NULL,
     recipient            TEXT,
     subject              TEXT NOT NULL,
-    gmail_internal_at    TEXT NOT NULL,
+    received_at          TEXT NOT NULL,
+    gmail_internal_at    TEXT,
     source_sent_at       TEXT,
-    raw_sha256           TEXT NOT NULL,
-    raw_path             TEXT NOT NULL,
-    html_path            TEXT,
+    raw_sha256           TEXT NOT NULL UNIQUE,
+    raw_path             TEXT NOT NULL UNIQUE,
     parse_status         TEXT NOT NULL DEFAULT 'pending'
                          CHECK (parse_status IN ('pending','parsed','ignored','failed','needs_review')),
     parser_version       TEXT,
@@ -177,16 +230,20 @@ CREATE TABLE email_messages (
     parsed_at            TEXT
 ) STRICT;
 
+CREATE UNIQUE INDEX idx_email_gmail_message_id
+    ON email_messages(gmail_message_id) WHERE gmail_message_id IS NOT NULL;
 CREATE INDEX idx_email_status_date
-    ON email_messages(parse_status, gmail_internal_at);
+    ON email_messages(parse_status, received_at);
 CREATE INDEX idx_email_original_message_id
     ON email_messages(original_message_id);
+CREATE INDEX idx_email_source_fingerprint
+    ON email_messages(source_fingerprint);
 
 CREATE TABLE retailers (
     id          INTEGER PRIMARY KEY,
     slug        TEXT NOT NULL UNIQUE,
     name        TEXT NOT NULL,
-    country     TEXT NOT NULL DEFAULT 'SG',
+    country     TEXT NOT NULL,
     created_at  TEXT NOT NULL
 ) STRICT;
 
@@ -203,7 +260,8 @@ CREATE TABLE categories (
     parent_id   INTEGER REFERENCES categories(id),
     slug        TEXT NOT NULL UNIQUE,
     name        TEXT NOT NULL,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    CHECK (parent_id IS NULL OR parent_id <> id)
 ) STRICT;
 
 CREATE TABLE products (
@@ -213,7 +271,7 @@ CREATE TABLE products (
     normalized_name   TEXT NOT NULL,
     brand_id          INTEGER REFERENCES brands(id),
     category_id       INTEGER REFERENCES categories(id),
-    package_quantity  REAL,
+    package_quantity  REAL CHECK (package_quantity IS NULL OR package_quantity > 0),
     package_unit      TEXT,
     variant           TEXT,
     is_active         INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
@@ -230,6 +288,7 @@ CREATE TABLE retailer_products (
     id                 INTEGER PRIMARY KEY,
     retailer_id        INTEGER NOT NULL REFERENCES retailers(id),
     external_sku       TEXT,
+    listing_key        TEXT NOT NULL,
     product_id         INTEGER NOT NULL REFERENCES products(id),
     latest_name        TEXT NOT NULL,
     latest_size_text   TEXT,
@@ -241,11 +300,14 @@ CREATE TABLE retailer_products (
                        CHECK (match_confidence >= 0.0 AND match_confidence <= 1.0),
     first_seen_at      TEXT NOT NULL,
     last_seen_at       TEXT NOT NULL,
-    UNIQUE (retailer_id, external_sku)
+    UNIQUE (retailer_id, listing_key)
 ) STRICT;
 
 CREATE INDEX idx_retailer_products_product
     ON retailer_products(product_id);
+CREATE UNIQUE INDEX idx_retailer_products_sku
+    ON retailer_products(retailer_id, external_sku)
+    WHERE external_sku IS NOT NULL;
 
 CREATE TABLE product_aliases (
     id                INTEGER PRIMARY KEY,
@@ -259,55 +321,81 @@ CREATE TABLE product_aliases (
                       CHECK (confidence >= 0.0 AND confidence <= 1.0),
     review_status     TEXT NOT NULL DEFAULT 'unreviewed'
                       CHECK (review_status IN ('unreviewed','accepted','rejected')),
-    created_at        TEXT NOT NULL,
-    UNIQUE (retailer_id, normalized_alias)
+    created_at        TEXT NOT NULL
 ) STRICT;
+
+CREATE UNIQUE INDEX idx_product_aliases_retailer
+    ON product_aliases(retailer_id, normalized_alias)
+    WHERE retailer_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_product_aliases_global
+    ON product_aliases(normalized_alias)
+    WHERE retailer_id IS NULL;
 
 CREATE TABLE orders (
     id                 INTEGER PRIMARY KEY,
     retailer_id        INTEGER NOT NULL REFERENCES retailers(id),
     external_order_id  TEXT NOT NULL,
-    ordered_at         TEXT NOT NULL,
-    delivery_at        TEXT,
-    currency           TEXT NOT NULL DEFAULT 'SGD',
-    subtotal_cents     INTEGER,
-    discount_cents     INTEGER NOT NULL DEFAULT 0,
-    delivery_fee_cents INTEGER NOT NULL DEFAULT 0,
-    service_fee_cents  INTEGER NOT NULL DEFAULT 0,
-    tax_cents          INTEGER,
-    total_cents        INTEGER NOT NULL,
-    status             TEXT NOT NULL DEFAULT 'completed'
-                       CHECK (status IN ('placed','completed','cancelled','refunded','unknown')),
     created_at         TEXT NOT NULL,
-    updated_at         TEXT NOT NULL,
     UNIQUE (retailer_id, external_order_id)
 ) STRICT;
 
-CREATE INDEX idx_orders_ordered_at
-    ON orders(ordered_at);
+CREATE TABLE order_revisions (
+    id                 INTEGER PRIMARY KEY,
+    order_id           INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    email_message_id   INTEGER NOT NULL REFERENCES email_messages(id),
+    revision_number    INTEGER NOT NULL CHECK (revision_number > 0),
+    revision_kind      TEXT NOT NULL
+                       CHECK (revision_kind IN ('confirmation','amendment','receipt','refund','reparse')),
+    revision_fingerprint TEXT NOT NULL,
+    parser_version     TEXT NOT NULL,
+    source_event_at    TEXT NOT NULL,
+    ordered_at         TEXT,
+    delivery_at       TEXT,
+    currency           TEXT NOT NULL,
+    subtotal_cents     INTEGER CHECK (subtotal_cents IS NULL OR subtotal_cents >= 0),
+    discount_cents     INTEGER NOT NULL DEFAULT 0 CHECK (discount_cents >= 0),
+    delivery_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK (delivery_fee_cents >= 0),
+    service_fee_cents  INTEGER NOT NULL DEFAULT 0 CHECK (service_fee_cents >= 0),
+    other_fee_cents    INTEGER NOT NULL DEFAULT 0 CHECK (other_fee_cents >= 0),
+    tax_cents          INTEGER CHECK (tax_cents IS NULL OR tax_cents >= 0),
+    included_tax_cents INTEGER NOT NULL DEFAULT 0 CHECK (included_tax_cents >= 0),
+    total_cents        INTEGER NOT NULL CHECK (total_cents >= 0),
+    status             TEXT NOT NULL DEFAULT 'completed'
+                       CHECK (status IN ('placed','completed','cancelled','refunded','unknown')),
+    is_current         INTEGER NOT NULL DEFAULT 1 CHECK (is_current IN (0,1)),
+    created_at         TEXT NOT NULL,
+    UNIQUE (order_id, revision_number),
+    UNIQUE (order_id, revision_fingerprint)
+) STRICT;
 
-CREATE TABLE order_source_emails (
-    order_id          INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+CREATE UNIQUE INDEX idx_order_revisions_current
+    ON order_revisions(order_id) WHERE is_current = 1;
+CREATE INDEX idx_order_revisions_ordered_at
+    ON order_revisions(ordered_at);
+
+CREATE TABLE order_revision_sources (
+    order_revision_id INTEGER NOT NULL REFERENCES order_revisions(id) ON DELETE CASCADE,
     email_message_id  INTEGER NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
-    source_role       TEXT NOT NULL DEFAULT 'confirmation'
-                      CHECK (source_role IN ('confirmation','amendment','receipt','refund','other')),
-    PRIMARY KEY (order_id, email_message_id)
+    linked_at         TEXT NOT NULL,
+    PRIMARY KEY (order_revision_id, email_message_id)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE order_items (
     id                    INTEGER PRIMARY KEY,
-    order_id              INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    line_number           INTEGER NOT NULL,
+    order_revision_id     INTEGER NOT NULL REFERENCES order_revisions(id) ON DELETE CASCADE,
+    line_number           INTEGER NOT NULL CHECK (line_number > 0),
+    line_fingerprint      TEXT NOT NULL,
     retailer_product_id   INTEGER NOT NULL REFERENCES retailer_products(id),
     raw_name              TEXT NOT NULL,
     quantity              REAL NOT NULL CHECK (quantity > 0),
     unit                  TEXT NOT NULL DEFAULT 'item',
-    unit_price_cents      INTEGER,
-    gross_cents           INTEGER,
-    discount_cents        INTEGER NOT NULL DEFAULT 0,
-    net_cents             INTEGER NOT NULL,
+    unit_price_cents      INTEGER CHECK (unit_price_cents IS NULL OR unit_price_cents >= 0),
+    gross_cents           INTEGER CHECK (gross_cents IS NULL OR gross_cents >= 0),
+    discount_cents        INTEGER NOT NULL DEFAULT 0 CHECK (discount_cents >= 0),
+    net_cents             INTEGER NOT NULL CHECK (net_cents >= 0),
     created_at            TEXT NOT NULL,
-    UNIQUE (order_id, line_number)
+    UNIQUE (order_revision_id, line_number),
+    UNIQUE (order_revision_id, line_fingerprint)
 ) STRICT;
 
 CREATE INDEX idx_order_items_product
@@ -317,7 +405,10 @@ CREATE VIEW purchase_history AS
 SELECT
     oi.id AS order_item_id,
     o.id AS order_id,
-    o.ordered_at,
+    rev.id AS order_revision_id,
+    COALESCE(rev.delivery_at, rev.ordered_at, rev.source_event_at) AS purchase_event_at,
+    rev.ordered_at,
+    rev.delivery_at,
     o.external_order_id,
     r.slug AS retailer,
     p.id AS product_id,
@@ -328,62 +419,78 @@ SELECT
     oi.unit_price_cents,
     oi.net_cents
 FROM order_items oi
-JOIN orders o ON o.id = oi.order_id
+JOIN order_revisions rev ON rev.id = oi.order_revision_id AND rev.is_current = 1
+JOIN orders o ON o.id = rev.order_id
 JOIN retailers r ON r.id = o.retailer_id
 JOIN retailer_products rp ON rp.id = oi.retailer_product_id
 JOIN products p ON p.id = rp.product_id
-WHERE o.status = 'completed';
+WHERE rev.status = 'completed';
 
 CREATE TABLE product_metrics (
     product_id              INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
-    purchase_count          INTEGER NOT NULL,
+    purchase_count          INTEGER NOT NULL CHECK (purchase_count >= 0),
     first_purchased_at      TEXT NOT NULL,
     last_purchased_at       TEXT NOT NULL,
-    median_interval_days    REAL,
-    interval_mad_days       REAL,
-    mean_quantity           REAL,
-    median_unit_price_cents INTEGER,
+    median_interval_days    REAL CHECK (median_interval_days IS NULL OR median_interval_days > 0),
+    interval_mad_days       REAL CHECK (interval_mad_days IS NULL OR interval_mad_days >= 0),
+    mean_quantity           REAL CHECK (mean_quantity IS NULL OR mean_quantity > 0),
+    median_unit_price_cents INTEGER CHECK (median_unit_price_cents IS NULL OR median_unit_price_cents >= 0),
     price_trend_pct         REAL,
     calculated_at           TEXT NOT NULL,
     algorithm_version       TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE replenishment_cycles (
+    id                          INTEGER PRIMARY KEY,
+    product_id                  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    last_purchase_order_item_id INTEGER NOT NULL REFERENCES order_items(id),
+    algorithm_version           TEXT NOT NULL,
+    cycle_key                   TEXT NOT NULL UNIQUE,
+    status                      TEXT NOT NULL DEFAULT 'active'
+                                CHECK (status IN ('active','resolved','dismissed','expired')),
+    opened_at                   TEXT NOT NULL,
+    resolved_at                 TEXT,
+    CHECK ((status = 'active' AND resolved_at IS NULL) OR
+           (status <> 'active' AND resolved_at IS NOT NULL)),
+    UNIQUE (product_id, last_purchase_order_item_id, algorithm_version)
+) STRICT;
+
 CREATE TABLE replenishment_predictions (
     id                    INTEGER PRIMARY KEY,
-    product_id            INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    cycle_id              INTEGER NOT NULL REFERENCES replenishment_cycles(id) ON DELETE CASCADE,
     generated_at          TEXT NOT NULL,
     expected_at           TEXT NOT NULL,
     window_start_at       TEXT NOT NULL,
     window_end_at         TEXT NOT NULL,
     due_score             REAL NOT NULL CHECK (due_score >= 0.0 AND due_score <= 1.0),
     confidence            REAL NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),
-    history_count         INTEGER NOT NULL,
-    median_interval_days  REAL NOT NULL,
-    interval_mad_days     REAL NOT NULL,
+    history_count         INTEGER NOT NULL CHECK (history_count >= 5),
+    median_interval_days  REAL NOT NULL CHECK (median_interval_days > 0),
+    interval_mad_days     REAL NOT NULL CHECK (interval_mad_days >= 0),
     algorithm_version     TEXT NOT NULL,
-    evidence_json         TEXT NOT NULL DEFAULT '{}',
-    status                TEXT NOT NULL DEFAULT 'active'
-                          CHECK (status IN ('active','notified','resolved','dismissed','expired')),
-    resolved_order_item_id INTEGER REFERENCES order_items(id),
-    UNIQUE (product_id, generated_at, algorithm_version)
+    evidence_json         TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(evidence_json)),
+    is_current            INTEGER NOT NULL DEFAULT 1 CHECK (is_current IN (0,1)),
+    UNIQUE (cycle_id, generated_at)
 ) STRICT;
 
+CREATE UNIQUE INDEX idx_predictions_current
+    ON replenishment_predictions(cycle_id) WHERE is_current = 1;
 CREATE INDEX idx_predictions_due
-    ON replenishment_predictions(status, due_score, window_end_at);
+    ON replenishment_predictions(is_current, due_score, window_end_at);
 
 CREATE TABLE co_purchase_edges (
     product_a_id    INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     product_b_id    INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    order_count     INTEGER NOT NULL,
-    total_orders    INTEGER NOT NULL,
-    support         REAL NOT NULL,
-    confidence_ab   REAL NOT NULL,
-    confidence_ba   REAL NOT NULL,
-    lift            REAL NOT NULL,
+    order_count     INTEGER NOT NULL CHECK (order_count >= 0),
+    total_orders    INTEGER NOT NULL CHECK (total_orders > 0),
+    support         REAL NOT NULL CHECK (support >= 0.0 AND support <= 1.0),
+    confidence_ab   REAL NOT NULL CHECK (confidence_ab >= 0.0 AND confidence_ab <= 1.0),
+    confidence_ba   REAL NOT NULL CHECK (confidence_ba >= 0.0 AND confidence_ba <= 1.0),
+    lift            REAL NOT NULL CHECK (lift >= 0.0),
     calculated_at   TEXT NOT NULL,
     algorithm_version TEXT NOT NULL,
     CHECK (product_a_id < product_b_id),
-    PRIMARY KEY (product_a_id, product_b_id)
+    PRIMARY KEY (product_a_id, product_b_id, algorithm_version)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE shopping_lists (
@@ -413,7 +520,9 @@ CREATE TABLE shopping_list_items (
     added_at              TEXT NOT NULL,
     purchased_at          TEXT,
     matched_order_item_id INTEGER REFERENCES order_items(id),
-    CHECK (product_id IS NOT NULL OR free_text IS NOT NULL)
+    CHECK ((product_id IS NOT NULL AND free_text IS NULL) OR
+           (product_id IS NULL AND free_text IS NOT NULL)),
+    CHECK ((status = 'purchased' AND purchased_at IS NOT NULL) OR status <> 'purchased')
 ) STRICT;
 
 CREATE TABLE conversations (
@@ -440,9 +549,13 @@ CREATE TABLE tool_calls (
     conversation_id       INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     assistant_message_id  INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
     tool_name             TEXT NOT NULL,
-    arguments_json        TEXT NOT NULL,
-    result_json           TEXT,
-    status                TEXT NOT NULL CHECK (status IN ('requested','succeeded','failed','denied')),
+    arguments_json        TEXT NOT NULL CHECK (json_valid(arguments_json)),
+    result_json           TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    confirmation_token_hash TEXT,
+    confirmation_expires_at TEXT,
+    confirmed_at          TEXT,
+    status                TEXT NOT NULL
+                          CHECK (status IN ('requested','awaiting_confirmation','succeeded','failed','denied','cancelled')),
     started_at            TEXT NOT NULL,
     finished_at           TEXT,
     error                 TEXT
@@ -450,9 +563,9 @@ CREATE TABLE tool_calls (
 
 CREATE TABLE notification_channels (
     id                 INTEGER PRIMARY KEY,
-    channel_type       TEXT NOT NULL CHECK (channel_type IN ('telegram','whatsapp','web')),
+    channel_type       TEXT NOT NULL CHECK (channel_type = 'telegram'),
     destination        TEXT NOT NULL,
-    secret_env_prefix  TEXT NOT NULL,
+    secret_credential_name TEXT NOT NULL,
     enabled            INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
     created_at         TEXT NOT NULL,
     UNIQUE (channel_type, destination)
@@ -471,7 +584,8 @@ CREATE TABLE alerts (
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending','sending','sent','failed','cancelled')),
     created_at      TEXT NOT NULL,
-    sent_at         TEXT
+    sent_at         TEXT,
+    CHECK ((status = 'sent' AND sent_at IS NOT NULL) OR status <> 'sent')
 ) STRICT;
 
 CREATE INDEX idx_alerts_pending
@@ -495,7 +609,7 @@ CREATE TABLE graph_nodes (
     entity_table     TEXT NOT NULL,
     entity_id        INTEGER NOT NULL,
     label            TEXT NOT NULL,
-    properties_json  TEXT NOT NULL DEFAULT '{}',
+    properties_json  TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(properties_json)),
     updated_at       TEXT NOT NULL,
     UNIQUE (entity_table, entity_id)
 ) STRICT, WITHOUT ROWID;
@@ -508,9 +622,9 @@ CREATE TABLE graph_edges (
     provenance_kind   TEXT NOT NULL
                       CHECK (provenance_kind IN ('EXTRACTED','DERIVED','INFERRED','MANUAL')),
     source_email_id   INTEGER REFERENCES email_messages(id),
-    method            TEXT,
+    method            TEXT NOT NULL,
     confidence        REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
-    evidence_json     TEXT NOT NULL DEFAULT '{}',
+    evidence_json     TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(evidence_json)),
     valid_from        TEXT,
     valid_to          TEXT,
     updated_at        TEXT NOT NULL,
@@ -527,10 +641,26 @@ CREATE INDEX idx_graph_edges_target
 
 1. A `product` is a canonical SKU-level concept: brand + item + variant + package size. “Meiji Fresh Milk 2L” and “Meiji Fresh Milk 1L” are different products.
 2. A `retailer_product` is the retailer's listing/SKU mapped to that canonical product.
-3. Unknown items create provisional products; ingestion must not stop while waiting for manual cleanup.
+   Its non-null `listing_key` is `sku:<external-sku>` when a SKU exists; otherwise it is a versioned fingerprint of retailer ID + normalized listing name + normalized package size.
+3. Unknown items create provisional products keyed by retailer listing identity (SKU when available). Different SKUs never merge merely because display names match; later normalization review performs deliberate merges.
 4. The normalization review screen can merge provisional products later. A merge rewrites foreign keys in one transaction and preserves the losing name as an alias.
-5. Orders and order items are immutable parsed facts. Corrections are applied by a reparse transaction from the preserved raw email, not by silently editing totals.
-6. Derived tables (`product_metrics`, `replenishment_predictions`, `co_purchase_edges`, `graph_nodes`, `graph_edges`) are rebuildable from factual tables.
+5. `source_kind` and `source_message_key` distinguish manual files from Gmail messages. Manual imports use their exact raw SHA-256 as the key; Gmail later uses its immutable Gmail message ID. Do not invent Gmail IDs for local files.
+6. `orders` identify the retailer order. Parsed facts are append-only `order_revisions` and their `order_items`. `order_revision_sources` preserves every distinct forwarded wrapper that supports the same source event and semantic revision; a later source event remains a new revision even if its business facts return to an earlier state.
+7. Revision and line fingerprints are versioned canonical business facts. A parser upgrade that yields identical facts links its source to the existing revision; it does not create history merely because the parser version changed.
+8. The original retailer message timestamp (`source_event_at`) selects the current revision, so delayed forwarding cannot replace newer facts with an older confirmation. Revision-kind precedence breaks an exact timestamp tie; an ambiguous same/lower-precedence tie enters review. Existing revisions are never rewritten or deleted.
+9. Downstream metrics read only the current completed revision. If the current revision changes, derived metrics, predictions, alerts, shopping-list matches, and graph projections are invalidated/recomputed; historical references remain valid because old item rows still exist.
+10. Derived tables (`product_metrics`, `replenishment_cycles`, `replenishment_predictions`, `co_purchase_edges`, `graph_nodes`, `graph_edges`) are rebuildable from factual tables.
+
+### Migration and backup protocol
+
+- `app/migrations/001_ingestion.sql` contains only the migration ledger, email sync/messages, retailers, brands, categories, products, retailer products/aliases, orders, revisions/source associations, and items required for the first vertical slice.
+- Analytics, chat, notification, and graph tables are introduced by later numbered migrations when their milestone begins.
+- Each migration has a recorded SHA-256 checksum and dirty/in-progress state. Only one migration process may run at a time.
+- Deployment runs the migration one-shot synchronously before starting the web
+  service. Web and future timer commands verify that the schema is current and
+  refuse both older and newer schemas; they never migrate automatically on boot.
+- Before a migration, create a consistent backup with Python's `sqlite3.Connection.backup`. Afterward run `PRAGMA foreign_key_check` and `PRAGMA integrity_check`.
+- A restore test must confirm the backup's schema version, raw-email references, and ability to reparse before it is considered valid.
 
 ### Initial graph predicates
 
@@ -553,13 +683,15 @@ The MVP predicts exact canonical products, not broad categories. Category-level 
 
 Eligibility:
 
-- At least four completed purchases, which provides at least three intervals.
+- At least five completed purchase events, which provides at least four positive intervals after same-day collapse.
 - Ignore cancelled/refunded orders.
-- Collapse multiple quantities of the same product in one order into one purchase event for interval calculation.
+- Use delivery/receipt time when available and fall back to order time.
+- Collapse multiple purchases of the same product on the same local calendar day into one event.
+- Require median interval `m > 0`; otherwise the product remains ineligible.
 
 For each eligible product:
 
-1. Sort purchase dates.
+1. Sort collapsed purchase-event dates.
 2. Calculate day intervals between purchases.
 3. Calculate median interval `m` and median absolute deviation `mad`.
 4. Set `tolerance = max(2 days, 1.5 × mad, 0.15 × m)`.
@@ -568,9 +700,17 @@ For each eligible product:
 7. Set `due_score = clamp((days_since_last - (m - tolerance)) / (2 × tolerance), 0, 1)`.
 8. Set `confidence = min(1, interval_count / 6) × (1 / (1 + mad / m))`.
 
-Send a `due_soon` alert when `due_score >= 0.75` and `confidence >= 0.55`. Use a dedupe key such as `due-soon:<product-id>:<ISO-week>` so repeated daily runs do not spam the user. Resolve an active prediction when a later completed order contains that product.
+Open one replenishment cycle per `(product, last_purchase_order_item, algorithm_version)`. Daily recalculation may append a new prediction row, but only one prediction is current for that cycle. Send `due_soon` when the current prediction first crosses `due_score >= 0.75` with `confidence >= 0.55`, or when an explicitly defined escalation threshold is crossed.
 
-This is deliberately a transparent statistical baseline. Store algorithm versions and prediction history so a later ML approach can be measured against it.
+Use the lifecycle dedupe key:
+
+```text
+due-soon:<product-id>:<last-purchase-order-item-id>:<algorithm-version>:<threshold>
+```
+
+Resolve the cycle when a later completed current order revision contains the product. Telegram delivery is at-least-once: a crash after Telegram accepts a message but before the local commit can produce a duplicate, because Telegram `sendMessage` has no application idempotency key.
+
+This is deliberately a transparent statistical baseline. Quantity-aware depletion, category/package-size rollups, and substitutions remain deferred but must be stated as limitations in the UI. Store algorithm versions and prediction history, then run walk-forward backtests so a later approach can be measured against it.
 
 ## 6. Chatbot design
 
@@ -603,8 +743,19 @@ Write-tool policy:
 - A tool call is validated with Pydantic.
 - The tool performs a normal application service operation, not model-authored SQL.
 - The result is written to `tool_calls`.
-- Destructive or ambiguous writes require confirmation in the web UI.
+- Destructive or ambiguous writes require a one-time confirmation token bound to the conversation, precise tool name, canonicalized arguments, and expiry.
 - The assistant may only claim success after the tool returns success.
+
+Execution and security rules:
+
+- Use Ollama's async client and a process-wide semaphore of one, matching `OLLAMA_NUM_PARALLEL=1`.
+- Enforce a turn timeout, cancellation on disconnect when safe, and a bounded `num_predict`; never let an abandoned generation occupy the model indefinitely.
+- Create SQLite connections inside the executing worker thread and offload synchronous repository operations so the WebSocket event loop remains responsive.
+- Persist user messages before generation and persist tool/audit outcomes atomically. A reconnect resumes from durable conversation state rather than replaying a write.
+- Bound every tool result and retain only a bounded recent history plus a separately generated summary. Do not paste entire order histories into the model.
+- Preserve Gemma's thinking context only within the active tool-call sequence and strip prior-turn thinking before later independent turns.
+- Validate WebSocket `Origin`, protect HTTP writes against CSRF, and restrict Tailscale grants to the intended user/devices.
+- Treat email text, product names, graph content, and tool results as untrusted data. Test prompt injection and never allow them to redefine the system/tool policy.
 
 The UI has five screens:
 
@@ -632,20 +783,20 @@ knowledge/
 └── predictions/due-soon.md
 ```
 
-Each document contains stable IDs, typed links, provenance, dates, and confidence. A separate command runs Graphify over `knowledge/` and places artifacts in an untracked `graphify-out/` directory. The Graph screen can link to the latest `graph.html`.
+Each document contains stable IDs, typed links, provenance, dates, and confidence. A separate manual command runs Graphify over `knowledge/` and places artifacts in an untracked `graphify-out/` directory. The Graph screen can link to the latest `graph.html` through a sandboxed iframe or restrictive content-security policy.
 
-Do not generate Graphify's internal `graph.json` directly; that would couple the application to a third-party internal format. If Graphify produces poor grocery relationships, keep the export and record the result—the core app still has exact `graph_nodes` and `graph_edges`.
+Do not schedule Graphify until a manual proof demonstrates useful, reproducible shopping relationships without an interactive coding-assistant session. Do not generate Graphify's internal `graph.json` directly; that would couple the application to a third-party internal format. If Graphify produces poor relationships, keep the export and record the result—the core app still has exact `graph_nodes` and `graph_edges`.
 
 ## 8. Notifications
 
 ### MVP: Telegram
 
-Create a private Telegram bot and capture the allowed personal chat ID. The app sends through the Bot API's `sendMessage` method. Store the bot token in an environment file, never in SQLite or Git. Reject any incoming chat ID not on the allowlist.
+Create a private Telegram bot and capture the configured personal chat ID. The app is send-only and uses the Bot API's `sendMessage` method. Store the bot token with systemd credentials or an equivalently restricted file, never in SQLite or Git. Validate the outbound destination at startup; incoming-chat allowlisting is added only if two-way Telegram updates are implemented later.
 
 Example daily message:
 
 ```text
-Grocery check — 10 Aug
+Shopping check — 10 Aug
 
 Likely due
 • Meiji Fresh Milk 2L — expected now; confidence 82%
@@ -665,91 +816,135 @@ Use only Meta's official WhatsApp Cloud API. It requires a Meta business portfol
 
 ## 9. Processes and schedules
 
-Run three local components:
+Run these local components:
 
 ```text
 ollama.service
-grocery-web.service          # FastHTML/FastAPI on 127.0.0.1:8000
-grocery-ingest.timer         # every 5 minutes
-grocery-daily.timer          # 08:00 Asia/Singapore
+shopping-migrate.service      # explicit one-shot schema migration
+shopping-web.service          # FastHTML/FastAPI on 127.0.0.1:8000
+shopping-ingest.timer         # every 5 minutes; planned
+shopping-daily.timer          # 08:00 Asia/Singapore; planned
 ```
 
-`grocery-ingest` performs Gmail fetch → raw archive → parse → normalize → transactional upsert. `grocery-daily` refreshes metrics, predictions, graph projection, Markdown/Graphify export, and pending alerts before delivering Telegram messages.
+`shopping-ingest` performs Gmail fetch → atomic raw archive → parse → normalize → append-only order revision transaction. `shopping-daily` refreshes metrics, prediction cycles, graph projection, Markdown export, and pending alerts before delivering Telegram messages. Graphify remains a separate manual command until proven safe for noninteractive scheduling.
 
-The web service must not own the scheduler. Separating scheduled commands prevents missed or duplicated jobs when the UI process restarts.
+The web service must not own the scheduler. Separating scheduled commands prevents missed or duplicated jobs when the UI process restarts. Harden every unit with the dedicated Unix user, restricted filesystem access, no-new-privileges, private temporary directories, and bounded memory/runtime. The deployment helper runs migrations before starting the web service; every web or scheduled command independently refuses a non-current schema. Tailscale grants/ACLs restrict the HTTP service to the intended user/devices; tailnet membership alone is not application authorization.
 
-## 10. Suggested repository layout
+### Deployment topology
+
+Develop on the MacBook, push reviewed commits to the public GitHub repository, validate them on GitHub-hosted Ubuntu runners, and deploy an exact green commit over SSH. The Ubuntu desktop runs Ollama and the Python application natively; Docker is not part of the MVP.
+
+The initial host uses the existing administrator login for reviewed updates and one non-login `shopping-app` service account for runtime data and processes. Do not register the homelab as a self-hosted runner for a public repository. The application lives at `/opt/shopping-app`, private data at `/var/lib/shopping-app`, configuration at `/etc/shopping-app`, and pre-deployment backups at `/var/backups/shopping-app`.
+
+`bootstrap-ubuntu.sh` performs the one-time provisioning. Later, the root-owned
+`deploy-shopping <green-main-sha>` helper stops the web service, creates a verified
+SQLite backup, updates the same checkout and virtual environment, migrates, restarts,
+health-checks, and restores the previous code/database on failure. Brief downtime is
+accepted; blue/green releases and symlink switching are outside the MVP. See
+[the Ubuntu homelab runbook](DEPLOYMENT.md).
+
+## 10. Repository layout (implemented plus planned modules)
 
 ```text
 jdsg-knowledge-graph-shopping/
+├── .github/workflows/
+│   └── ci.yml
 ├── pyproject.toml
 ├── uv.lock
 ├── .env.example
-├── migrations/
-│   └── 001_initial.sql
+├── main.py
 ├── app/
-│   ├── main.py
+│   ├── __init__.py
+│   ├── cli.py
 │   ├── config.py
+│   ├── runtime.py
+│   ├── models.py
+│   ├── ingestion.py
+│   ├── migrations/
+│   │   ├── 001_ingestion.sql
+│   │   ├── 002_analytics.sql                 # planned
+│   │   ├── 003_chat.sql                      # planned
+│   │   └── 004_notifications_and_graph.sql   # planned
 │   ├── api/
-│   ├── web/
 │   ├── chat/
 │   ├── db/
+│   │   ├── connection.py
+│   │   ├── migrations.py
+│   │   └── repository.py
 │   ├── email/
+│   │   ├── archive.py
+│   │   ├── normalize.py
+│   │   └── parsers/
+│   │       ├── __init__.py
+│   │       └── fairprice.py
 │   ├── products/
 │   ├── analytics/
 │   ├── graph/
 │   └── notifications/
-├── commands/
-│   ├── ingest.py
-│   ├── recompute.py
-│   ├── notify.py
-│   └── export_graph.py
 ├── knowledge/                 # generated, untracked
 ├── graphify-out/              # generated, untracked
 ├── data/                      # private, untracked
 ├── tests/
 │   ├── fixtures/email/
-│   ├── test_email_parser.py
-│   ├── test_idempotency.py
-│   ├── test_normalization.py
+│   ├── test_parser.py
+│   ├── test_ingestion.py
+│   ├── test_migrations.py
 │   ├── test_predictions.py
 │   ├── test_tools.py
-│   └── test_notifications.py
-└── deploy/systemd/
+│   ├── test_notifications.py
+│   └── test_web.py
+├── deploy/
+│   ├── bootstrap-ubuntu.sh
+│   ├── deploy-ubuntu.sh
+│   ├── shopping.env.example
+│   └── systemd/
+│       ├── shopping-migrate.service
+│       └── shopping-web.service
+└── docs/
+    ├── MVP_PLAN.md
+    └── DEPLOYMENT.md
 ```
 
 ## 11. MVP milestones and exit criteria
 
 ### Milestone 0 — Samples and skeleton
 
-- Collect 10–20 representative NTUC emails with sensitive fixtures sanitized for tests.
+Implementation: code and local verification are complete for the first slice; the hosted CI workflow is configured but must run after the changes are pushed. Private samples informed the sanitised fixture structure but remain outside Git.
+
+- Collect 10–20 representative retailer emails and create irreversibly sanitised structural fixtures for supported adapters.
 - Create the `uv` project, configuration loader, logging, and health page.
+- Pin Python 3.14 and verify dependency resolution before creating `uv.lock`.
+- Assert/log the Python and patched SQLite versions; refuse a known-vulnerable WAL build.
 - Create `.gitignore` before any real email, database, OAuth token, or Telegram token is added.
+- Add GitHub-hosted Ubuntu CI for lockfile, lint, typing, tests, migration smoke tests, and secret-leak checks. Never route CI or pull requests to the homelab machine.
 
 Exit: the FastHTML page loads locally and no sensitive file appears in Git status.
 
 ### Milestone 1 — Database and manual import
 
-- Apply migration `001_initial.sql`.
+Implementation: the code slice is complete. Migration 001, exact-byte content-addressed archive, generic parser dispatch, strict first-vendor HTML parsing, source-time revision ordering, provenance, current-order pages, idempotency/concurrency tests, and wheel packaging are implemented. Production backup/restore remains before the milestone exit is accepted.
+
+- Apply migration `001_ingestion.sql` with checksum/dirty-state handling.
 - Import a local `.eml` file and preserve its raw bytes/hash.
 - Parse order ID, date, line items, quantities, prices, discounts, and totals.
 - Display an order and its line items.
 
-Exit: fixture totals reconcile exactly and importing the same message twice creates no duplicate email, order, or line item.
+Exit: fixture totals reconcile exactly; importing the same message twice creates no duplicate email, order revision, or line item; an amendment creates a new current revision without rewriting the old one; backup/restore and integrity checks pass.
 
 ### Milestone 2 — Gmail ingestion
 
 - Complete one-time OAuth setup for the dedicated mailbox.
-- Search, download, archive, and process forwarded messages.
+- Search with pagination/cursor overlap, download, atomically archive, and process forwarded messages.
 - Add parse failure/review states and an ingestion status page.
+- Add OAuth-expiry/failure reporting and an archive/database reconciliation command.
 - Install the five-minute systemd timer.
 
-Exit: a newly forwarded NTUC email appears once in the UI without manual app intervention.
+Exit: a newly forwarded supported-retailer email appears once in the UI without manual app intervention.
 
 ### Milestone 3 — Product normalization
 
 - Normalize punctuation, case, pack-size notation, and known aliases deterministically.
-- Use Qwen only when deterministic matching is inconclusive.
+- Leave inconclusive matches provisional; do not introduce an LLM dependency yet.
 - Add the review/merge UI and alias preservation.
 
 Exit: repeat purchases map to the same canonical product, uncertain matches remain visibly provisional, and manual corrections survive reprocessing.
@@ -758,7 +953,7 @@ Exit: repeat purchases map to the same canonical product, uncertain matches rema
 
 - Compute product metrics, replenishment predictions, and co-purchase edges.
 - Build the app-owned graph projection with provenance/evidence.
-- Export Markdown and run Graphify.
+- Export Markdown and run Graphify manually as a non-critical experiment.
 - Display the due-items dashboard and graph artifact.
 
 Exit: every displayed prediction can show its purchase dates, calculation, confidence, and algorithm version.
@@ -766,34 +961,50 @@ Exit: every displayed prediction can show its purchase dates, calculation, confi
 ### Milestone 5 — Local chatbot
 
 - Run `gemma4:12b-it-q4_K_M` in Ollama with 8K context.
-- Benchmark `qwen3.5:9b-q4_K_M` against the same tool-calling acceptance set before fixing the final model choice.
+- Benchmark `qwen3.5:9b-q4_K_M` against the same 30–50-case tool-calling acceptance set before fixing the final model choice.
 - Implement the explicit tool loop and read-only tools first.
 - Add WebSocket token streaming and persist chat/tool history.
 - Add shopping-list write tools with confirmation.
 
-Exit: the chatbot answers five acceptance questions using tool results, never invented database facts, and the model remains fully GPU-loaded.
+Exit: the selected model meets the agreed tool-selection/schema-validity threshold across 30–50 cases, stays within latency and token limits, handles timeout/reconnect safely, and does not invent database facts. GPU loading is measured but is not the sole acceptance criterion.
 
 Acceptance questions:
 
-1. What did I buy in my latest NTUC order?
+1. What did I buy in my latest order?
 2. When did I last buy milk and how much did it cost?
 3. What is likely due this week, and why?
 4. What do I commonly buy with eggs?
 5. Add the two highest-confidence due items to my shopping list.
 
+The wider evaluation set covers no-tool answers, invalid arguments, ambiguous products, multi-tool turns, multi-turn references, confirmation expiry/replay, refusal, bounded results, prompt injection, cancellation, and WebSocket reconnect.
+
 ### Milestone 6 — Telegram and remote access
 
-- Send idempotent daily Telegram alerts.
+- Send lifecycle-deduplicated, at-least-once Telegram alerts and document the ambiguous-send crash case.
 - Bind the web app to localhost and expose it with Tailscale Serve.
+- Restrict Tailscale grants/ACLs to the intended user/devices and validate WebSocket origins.
 - Confirm desktop and phone access.
-- Add database and raw-email backup instructions.
+- Implement encrypted database/raw-email backup and a tested restore procedure.
 
-Exit: one scheduled alert arrives, links to the private dashboard, and rerunning the job does not duplicate the alert.
+Exit: one scheduled alert arrives and links to the private dashboard; rerunning the normal job does not duplicate the lifecycle alert; the documented crash window is tested and treated as at-least-once.
 
-### Milestone 7 — Hardening and MVP release
+### Milestone 7 — Ubuntu deployment automation
+
+- Provision one `shopping-app` runtime account, private `/var/lib`, `/var/backups`, and `/etc` directories, and hardened systemd units. Continue using the existing administrator login for deployment.
+- Run the bootstrap script for an exact CI-passing commit at `/opt/shopping-app` and expose only the loopback service through Tailscale Serve.
+- Have the root-owned helper deploy an exact commit in place with `uv sync --locked`, a consistent pre-migration SQLite backup, migration, service restart, and health check.
+- Test rollback of both code and database after a deliberately failed migration/health check.
+- Keep the public repository on GitHub-hosted runners only; no pull-request workflow may execute on the homelab.
+
+Exit: the one-time bootstrap succeeds, `deploy-shopping` updates a later CI-passing
+commit from `main`, and a tested rollback restores the previous healthy code and
+database without losing factual data.
+
+### Milestone 8 — Hardening and MVP release
 
 - Test parser regression across all fixtures.
 - Test failed Gmail/Ollama/Telegram calls and retries.
+- Test concurrent reads/writes, lock retry exhaustion, migration failure, amendment/refund revisions, OAuth expiry, malformed tool calls, confirmation replay, prompt injection, WebSocket reconnect, and Telegram ambiguous delivery.
 - Add health indicators for last successful ingestion, prediction, and notification.
 - Document restore and reparse procedures.
 
@@ -812,7 +1023,9 @@ Exit: the system can rebuild every derived table and graph artifact from the SQL
 
 ## 13. First implementation slice
 
-The first coding slice should stop after one saved email travels end to end:
+Status: implemented and verified against irreversibly sanitised fixtures shaped from the first retailer's real HTML structure. Private personal samples remain outside the regression suite.
+
+The first coding slice stops after one saved email travels end to end:
 
 ```text
 sample .eml
@@ -822,12 +1035,13 @@ sample .eml
   → repeat import proves idempotency
 ```
 
-Do not install Ollama, Graphify, Gmail OAuth, or Telegram until this slice passes. It isolates the most project-specific risk: whether the real NTUC email format can be parsed accurately and reproducibly.
+Do not install Ollama, Graphify, Gmail OAuth, or Telegram until this slice passes. It isolates the most project-specific risk: whether supported retailer email formats can be parsed accurately and reproducibly.
 
 ## 14. Primary references
 
 - [Gmail API Python quickstart](https://developers.google.com/workspace/gmail/api/quickstart/python)
 - [Gmail messages API](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages)
+- [Google OAuth token policies](https://developers.google.com/identity/protocols/oauth2/policies)
 - [Google service-account authorization](https://developers.google.com/identity/protocols/oauth2/service-account)
 - [Ollama Qwen 3.5 tags](https://ollama.com/library/qwen3.5/tags)
 - [Ollama Gemma 4 tags](https://ollama.com/library/gemma4/tags)
@@ -835,8 +1049,12 @@ Do not install Ollama, Graphify, Gmail OAuth, or Telegram until this slice passe
 - [Google Gemma 4 function calling](https://ai.google.dev/gemma/docs/capabilities/text/function-calling-gemma4)
 - [Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling)
 - [Ollama context-length guidance](https://docs.ollama.com/context-length)
+- [SQLite WAL guidance and WAL-reset fix](https://www.sqlite.org/wal.html)
+- [SQLite online backup API](https://www.sqlite.org/backup.html)
 - [FastHTML official documentation](https://www.fastht.ml/docs/index.html)
 - [FastHTML chatbot and WebSocket examples](https://fastht.ml/docs/tutorials/by_example.html)
 - [Graphify tutorial](https://graphify.com/docs/tutorial)
 - [Telegram Bot API](https://core.telegram.org/bots/api)
+- [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
+- [systemd credentials](https://www.freedesktop.org/software/systemd/man/systemd-creds.html)
 - [Meta WhatsApp Cloud API collection](https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api)

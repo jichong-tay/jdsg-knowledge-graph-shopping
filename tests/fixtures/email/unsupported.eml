@@ -1,0 +1,8 @@
+From: Unknown Sender <sender@example.invalid>
+To: Shopping App <inbox@example.invalid>
+Date: Sun, 09 Aug 2026 15:00:00 +0800
+Message-ID: <unsupported@example.invalid>
+Subject: A newsletter, not a transaction
+Content-Type: text/plain; charset="utf-8"
+
+There is no supported shopping order in this sanitised fixture.

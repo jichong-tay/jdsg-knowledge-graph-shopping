@@ -1,0 +1,21 @@
+[Unit]
+Description=Shopping Intelligence database migration
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=shopping-app
+Group=shopping-app
+WorkingDirectory=/opt/shopping-app
+EnvironmentFile=/etc/shopping-app/app.env
+ExecStart=/opt/shopping-app/.venv/bin/shopping migrate
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/shopping-app

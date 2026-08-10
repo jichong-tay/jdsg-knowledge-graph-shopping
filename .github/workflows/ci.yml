@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Python 3.14 checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.3"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          prune-cache: true
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Scan tracked files for secrets
+        run: git ls-files -z | xargs -0 uv run --locked detect-secrets-hook --baseline .secrets.baseline
+
+      - name: Check formatting and lint
+        run: |
+          uv run --locked ruff format --check .
+          uv run --locked ruff check .
+
+      - name: Check Ubuntu deployment scripts
+        run: |
+          bash -n deploy/bootstrap-ubuntu.sh deploy/deploy-ubuntu.sh
+          bash deploy/bootstrap-ubuntu.sh --help
+          bash deploy/deploy-ubuntu.sh --help
+
+      - name: Check types
+        run: uv run --locked pyright
+
+      - name: Run tests
+        run: uv run --locked pytest -q
+
+      - name: Smoke-test migrations
+        env:
+          SHOPPING_CI_DATABASE: ${{ runner.temp }}/shopping-ci.sqlite3
+        run: uv run --locked shopping migrate --database "$SHOPPING_CI_DATABASE"
+
+      - name: Smoke-test the packaged wheel
+        env:
+          SHOPPING_WHEEL_DIR: ${{ runner.temp }}/dist
+          SHOPPING_WHEEL_VENV: ${{ runner.temp }}/wheel-venv
+        run: |
+          uv build --wheel --no-build-isolation --out-dir "$SHOPPING_WHEEL_DIR"
+          uv venv --python 3.14 "$SHOPPING_WHEEL_VENV"
+          UV_PROJECT_ENVIRONMENT="$SHOPPING_WHEEL_VENV" \
+            uv sync --locked --no-dev --no-install-project
+          uv pip install --python "$SHOPPING_WHEEL_VENV/bin/python" \
+            --no-deps "$SHOPPING_WHEEL_DIR"/*.whl
+          uv pip check --python "$SHOPPING_WHEEL_VENV/bin/python"
+          chmod -R a-w "$SHOPPING_WHEEL_VENV"
+          "$SHOPPING_WHEEL_VENV/bin/shopping" migrate \
+            --database "${{ runner.temp }}/shopping-wheel.sqlite3"
+
+      - name: Verify checks leave the repository clean
+        run: |
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"

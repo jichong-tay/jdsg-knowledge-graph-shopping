@@ -1,0 +1,77 @@
+From: Example Shopper <shopper@example.invalid>
+To: Shopping Inbox <inbox@example.invalid>
+Date: Mon, 12 Jan 2026 08:00:00 +0800
+Message-ID: <forwarded-fairprice-order-example01@example.invalid>
+Subject: Fwd: Thank you for your order EXAMPLE01
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="example-forward-boundary"
+
+--example-forward-boundary
+Content-Type: text/plain; charset="utf-8"
+
+Forwarded to the private shopping archive.
+
+--example-forward-boundary
+Content-Type: message/rfc822
+
+From: FairPrice Online <orders@fairprice.example.invalid>
+To: Example Shopper <shopper@example.invalid>
+Date: Sun, 11 Jan 2026 10:00:00 +0800
+Message-ID: <fairprice-order-example01-v1@example.invalid>
+Subject: Thank you for your order EXAMPLE01
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<!doctype html>
+<html>
+<head>
+  <title>Example order</title>
+  <style>body { color: black; }</style>
+  <script>var hidden = "Order ID BADVALUE Total S$999.99";</script>
+</head>
+<body>
+  <table>
+    <tr><td>Hi Example Shopper,</td></tr>
+    <tr><td>Thank you for your order. We are preparing it for delivery.</td></tr>
+    <tr><td>Delivery Address</td></tr>
+    <tr><td>Example Resident</td></tr>
+    <tr><td>1 Example Way, Singapore 000000</td></tr>
+    <tr><td>Order ID</td></tr>
+    <tr><td>EXAMPLE01</td></tr>
+    <tr><td>Order Total</td></tr>
+    <tr><td>S$14.00</td></tr>
+    <tr><td><a href=3D"https://tracking.example.invalid/order/EXAMPLE01">Track your order</a></td></tr>
+    <tr><td>Delivery Slot</td></tr>
+    <tr><td>Mon, 12 Jan</td></tr>
+    <tr><td>6pm - 8pm</td></tr>
+    <tr><td>FairPrice</td></tr>
+    <tr><td>2 item(s)</td></tr>
+    <tr><td>Example Oat Drink 1L</td></tr>
+    <tr><td>S$4.00 / item</td></tr>
+    <tr><td>2</td></tr>
+    <tr><td>S$8.00</td></tr>
+    <tr><td>Example Paper Towels 2 Pack</td></tr>
+    <tr><td>S$3.50 / item</td></tr>
+    <tr><td>1</td></tr>
+    <tr><td>S$3.50</td></tr>
+    <tr><td>Subtotal</td></tr>
+    <tr><td>S$11.50</td></tr>
+    <tr><td>Delivery Fee</td></tr>
+    <tr><td>S$3.00</td></tr>
+    <tr><td>FairPrice</td></tr>
+    <tr><td>FREE</td></tr>
+    <tr><td>Service Fee</td></tr>
+    <tr><td>S$0.50</td></tr>
+    <tr><td>Redeem LinkPoints</td></tr>
+    <tr><td>100P</td></tr>
+    <tr><td>-S$1.00</td></tr>
+    <tr><td>Total</td></tr>
+    <tr><td>S$14.00</td></tr>
+    <tr><td>Price includes GST</td></tr>
+  </table>
+  <img src=3D"https://assets.example.invalid/pixel.png" alt=3D"">
+</body>
+</html>
+
+--example-forward-boundary--

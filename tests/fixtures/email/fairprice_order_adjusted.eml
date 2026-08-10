@@ -1,0 +1,59 @@
+From: FairPrice Online <orders@fairprice.example.invalid>
+To: Example Shopper <shopper@example.invalid>
+Date: Sun, 11 Jan 2026 11:30:00 +0800
+Message-ID: <fairprice-order-example01-v2@example.invalid>
+Subject: Thank you for your order EXAMPLE01
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<!doctype html>
+<html>
+<head><title>Adjusted example order</title></head>
+<body>
+  <table>
+    <tr><td>Hi Example Shopper,</td></tr>
+    <tr><td>Thank you for your order. Your latest order details are below.</td></tr>
+    <tr><td>Delivery Address</td></tr>
+    <tr><td>Example Resident</td></tr>
+    <tr><td>1 Example Way, Singapore 000000</td></tr>
+    <tr><td>Order ID</td></tr>
+    <tr><td>EXAMPLE01</td></tr>
+    <tr><td>Order Total</td></tr>
+    <tr><td>S$18.90</td></tr>
+    <tr><td><a href=3D"https://tracking.example.invalid/order/EXAMPLE01">Track your order</a></td></tr>
+    <tr><td>Delivery Slot</td></tr>
+    <tr><td>Tue, 13 Jan</td></tr>
+    <tr><td>10am - 12pm</td></tr>
+    <tr><td>FairPrice</td></tr>
+    <tr><td>2 item(s)</td></tr>
+    <tr><td>Example Sparkling Drink &amp; Mixer 4 Pack</td></tr>
+    <tr><td>S$5.00 / item</td></tr>
+    <tr><td>2</td></tr>
+    <tr><td>S$9.00</td></tr>
+    <tr><td>Includes S$0.20 deposit</td></tr>
+    <tr><td>Example Storage Box Medium</td></tr>
+    <tr><td>S$8.00 / item</td></tr>
+    <tr><td>1</td></tr>
+    <tr><td>S$8.00</td></tr>
+    <tr><td>Subtotal</td></tr>
+    <tr><td>S$17.00</td></tr>
+    <tr><td>Delivery Fee</td></tr>
+    <tr><td>S$2.00</td></tr>
+    <tr><td>FairPrice</td></tr>
+    <tr><td>FREE</td></tr>
+    <tr><td>Service Fee</td></tr>
+    <tr><td>S$1.00</td></tr>
+    <tr><td>Container Deposit</td></tr>
+    <tr><td>S$0.40</td></tr>
+    <tr><td>Redeem LinkPoints</td></tr>
+    <tr><td>150P</td></tr>
+    <tr><td>-S$1.50</td></tr>
+    <tr><td>Total</td></tr>
+    <tr><td>S$18.90</td></tr>
+    <tr><td>Price includes GST</td></tr>
+    <tr><td>S$1.24</td></tr>
+  </table>
+  <img src=3D"https://assets.example.invalid/order-image.png" alt=3D"">
+</body>
+</html>
