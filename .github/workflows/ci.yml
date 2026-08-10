@@ -62,14 +62,19 @@ jobs:
 
       - name: Smoke-test migrations
         env:
-          SHOPPING_CI_DATABASE: ${{ runner.temp }}/shopping-ci.sqlite3
-        run: uv run --locked shopping migrate --database "$SHOPPING_CI_DATABASE"
+          SHOPPING_CI_STATE_DIR: ${{ runner.temp }}/shopping-ci
+          SHOPPING_CI_DATABASE: ${{ runner.temp }}/shopping-ci/shopping.sqlite3
+        run: |
+          install -d -m 700 "$SHOPPING_CI_STATE_DIR"
+          uv run --locked shopping migrate --database "$SHOPPING_CI_DATABASE"
 
       - name: Smoke-test the packaged wheel
         env:
           SHOPPING_WHEEL_DIR: ${{ runner.temp }}/dist
           SHOPPING_WHEEL_VENV: ${{ runner.temp }}/wheel-venv
+          SHOPPING_WHEEL_STATE_DIR: ${{ runner.temp }}/shopping-wheel
         run: |
+          install -d -m 700 "$SHOPPING_WHEEL_STATE_DIR"
           uv build --wheel --no-build-isolation --out-dir "$SHOPPING_WHEEL_DIR"
           uv venv --python 3.14 "$SHOPPING_WHEEL_VENV"
           UV_PROJECT_ENVIRONMENT="$SHOPPING_WHEEL_VENV" \
@@ -79,7 +84,7 @@ jobs:
           uv pip check --python "$SHOPPING_WHEEL_VENV/bin/python"
           chmod -R a-w "$SHOPPING_WHEEL_VENV"
           "$SHOPPING_WHEEL_VENV/bin/shopping" migrate \
-            --database "${{ runner.temp }}/shopping-wheel.sqlite3"
+            --database "$SHOPPING_WHEEL_STATE_DIR/shopping.sqlite3"
 
       - name: Verify checks leave the repository clean
         run: |
