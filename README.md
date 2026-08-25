@@ -14,7 +14,8 @@ layers.
 - SQLite schema with append-only order revisions, products, retailer listings, and
   source provenance
 - Idempotent manual .eml import with concurrency and rollback protection
-- FastHTML dashboard, order detail page, and JSON health endpoint
+- Responsive FastHTML interface built from pinned Stitchyard primitives, plus the JSON
+  health endpoint
 - Loopback-only web binding
 - GitHub-hosted CI, dependency updates, secret scanning, and wheel verification
 - Ubuntu systemd units, one-time bootstrap script, and in-place deployment helper
@@ -68,6 +69,25 @@ uv run --locked shopping serve
 Open http://127.0.0.1:8000. The application deliberately stays on loopback; the
 Ubuntu design exposes it privately through Tailscale Serve. A non-loopback bind
 requires the explicit SHOPPING_ALLOW_NON_LOOPBACK=true override.
+
+## Web interface
+
+The read-only interface has three live destinations:
+
+- **Overview** surfaces high-confidence ingestion/runtime attention, complete current
+  order and item counts, recorded order value by currency, scheduled delivery facts,
+  recent privacy-minimised ingestion activity, and the latest orders.
+- **Orders** provides server-side product/order/SKU search, retailer and status
+  filters, explicit sorting, pagination, responsive rows, contextual order drawers,
+  and canonical full pages with source-event-ordered revision history.
+- **System** shows current runtime, SQLite/schema safety, ingestion states, privacy-
+  minimised Gmail sync state, and product-normalisation backlog.
+
+Navigation and volatile health regions use progressively enhanced HTMX requests;
+ordinary links and forms remain valid without JavaScript. The shell follows the
+system light/dark preference initially and remembers a local manual override. All
+browser assets are served locally; the UI does not load fonts, scripts, or styles
+from public CDNs.
 
 ## Commands
 

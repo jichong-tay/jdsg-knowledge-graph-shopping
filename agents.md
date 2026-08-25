@@ -84,3 +84,17 @@ Before handoff, also verify a built wheel contains `app/migrations/001_ingestion
 ## Documentation discipline
 
 Update `README.md` after changing current behavior or setup. Update `docs/MVP_PLAN.md` when target architecture, schema, or milestones change. Update `docs/DEPLOYMENT.md` when CI or Ubuntu operations change. Clearly separate implemented behavior from planned behavior.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as local Markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the default canonical label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.

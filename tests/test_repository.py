@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from app.db.connection import connect_database, transaction
 from app.db.repository import count_current_orders, list_current_orders
+from app.ingestion import import_eml
+from app.web_queries import list_orders
 
 
 def test_dashboard_count_reflects_all_orders_beyond_the_list_cap(settings) -> None:
@@ -54,3 +56,28 @@ def test_dashboard_count_reflects_all_orders_beyond_the_list_cap(settings) -> No
 
     assert count_current_orders(settings.database_path) == 25
     assert len(list_current_orders(settings.database_path)) == 20
+    third_page = list_orders(settings.database_path, page=3, page_size=10)
+    assert third_page["total"] == 25
+    assert third_page["page"] == 3
+    assert len(third_page["items"]) == 5
+
+    highest_total = list_orders(settings.database_path, sort="total_desc", page=1, page_size=10)
+    soonest_delivery = list_orders(
+        settings.database_path, sort="delivery_asc", page=1, page_size=10
+    )
+    expected_ids = [f"order-{index}" for index in range(24, 14, -1)]
+    assert [item["external_order_id"] for item in highest_total["items"]] == expected_ids
+    assert [item["external_order_id"] for item in soonest_delivery["items"]] == expected_ids
+
+
+def test_order_search_matches_products_and_treats_wildcards_literally(
+    settings, fixture_dir
+) -> None:
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+
+    matching = list_orders(settings.database_path, query="Oat")
+    wildcard = list_orders(settings.database_path, query="%")
+
+    assert matching["total"] == 1
+    assert matching["items"][0]["external_order_id"] == "EXAMPLE01"
+    assert wildcard["total"] == 0

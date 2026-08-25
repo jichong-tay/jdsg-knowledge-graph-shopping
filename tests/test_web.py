@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import stat
+from datetime import UTC, datetime
 from pathlib import Path
 
+from app.db.repository import record_gmail_sync_error
 from app.ingestion import import_eml
 from app.runtime import get_runtime_info
 from app.web import create_app
@@ -63,6 +65,193 @@ def test_empty_dashboard_shows_working_synthetic_import_command(settings) -> Non
 
     assert response.status_code == 200
     assert "fairprice_order_minimal.eml --synthetic-fixture" in response.text
+
+
+def test_application_shell_links_only_to_live_pages(settings) -> None:
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'aria-label="Primary"' in response.text
+    assert 'href="/"' in response.text
+    assert 'href="/orders"' in response.text
+    assert 'href="/system"' in response.text
+    assert "Chat" not in response.text
+    assert "Graph" not in response.text
+
+
+def test_orders_page_exposes_searchable_current_order_history(settings, fixture_dir: Path) -> None:
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get("/orders?q=Oat")
+
+    assert response.status_code == 200
+    assert "Orders" in response.text
+    assert "Example Oat Drink 1L" in response.text
+    assert "EXAMPLE01" in response.text
+    assert 'name="q"' in response.text
+
+
+def test_system_page_exposes_current_operational_state(settings) -> None:
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get("/system")
+
+    assert response.status_code == 200
+    assert "System health" in response.text
+    assert "SQLite" in response.text
+    assert "Ingestion" in response.text
+
+
+def test_overview_reports_complete_current_facts_and_recorded_value(
+    settings, fixture_dir: Path
+) -> None:
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Current item lines" in response.text
+    assert "Recorded order value" in response.text
+    assert "SGD 14.00" in response.text
+
+
+def test_order_detail_drawer_is_a_dialog_fragment(settings, fixture_dir: Path) -> None:
+    result = import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get(
+            f"/orders/{result.order_id}?view=drawer",
+            headers={"HX-Request": "true", "HX-Target": "drawer-root"},
+        )
+
+    assert response.status_code == 200
+    assert "<html" not in response.text
+    assert 'data-drawer="true"' in response.text
+    assert 'role="dialog"' in response.text
+    assert 'aria-modal="true"' in response.text
+    assert "Example Oat Drink 1L" in response.text
+
+
+def test_order_detail_shows_source_ordered_revision_history(settings, fixture_dir: Path) -> None:
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    result = import_eml(fixture_dir / "fairprice_order_adjusted.eml", settings)
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get(f"/orders/{result.order_id}")
+
+    assert response.status_code == 200
+    assert "Revision history" in response.text
+    assert 'data-revision-count="2"' in response.text
+    assert "Current factual revision" in response.text
+    assert "Historical revision" in response.text
+
+
+def test_system_page_reports_current_gmail_error_without_raw_account_data(settings) -> None:
+    record_gmail_sync_error(
+        settings.database_path,
+        account_key="private.person@example.invalid",
+        scan_watermark_at=datetime(2026, 8, 25, tzinfo=UTC),
+        error_code="gmail_oauth_expired",
+    )
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get("/system")
+
+    assert response.status_code == 200
+    assert "Gmail sync" in response.text
+    assert "gmail_oauth_expired" in response.text
+    assert "private.person@example.invalid" not in response.text
+
+
+def test_system_page_does_not_hide_an_error_behind_a_newer_success(settings, monkeypatch) -> None:
+    def snapshot(_database_path):
+        return {
+            "ingestion": {},
+            "gmail_sync": [
+                {
+                    "last_success_at": "2026-08-25T12:00:00+00:00",
+                    "last_error_at": None,
+                    "last_error": "source_error",
+                    "updated_at": "2026-08-25T12:00:00+00:00",
+                },
+                {
+                    "last_success_at": None,
+                    "last_error_at": "2026-08-25T11:00:00+00:00",
+                    "last_error": "gmail_oauth_expired",
+                    "updated_at": "2026-08-25T11:00:00+00:00",
+                },
+            ],
+            "normalization": {
+                "provisional": 0,
+                "rejected": 0,
+                "unreviewed_aliases": 0,
+            },
+        }
+
+    monkeypatch.setattr("app.web_app.system_snapshot", snapshot)
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get("/system")
+
+    assert response.status_code == 200
+    assert "gmail_oauth_expired" in response.text
+
+
+def test_overview_includes_delivery_and_recent_ingestion_regions(
+    settings, fixture_dir: Path
+) -> None:
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Scheduled deliveries" in response.text
+    assert "Recent ingestion" in response.text
+    assert "Manual source" in response.text
+
+
+def test_order_history_exposes_safe_source_evidence(settings, fixture_dir: Path) -> None:
+    result = import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    raw_hash_prefix = Path(result.archived_path).stem[:8]
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        response = client.get(f"/orders/{result.order_id}")
+
+    assert response.status_code == 200
+    assert "Source evidence" in response.text
+    assert "Manual source" in response.text
+    assert raw_hash_prefix in response.text
+    assert str(settings.raw_email_dir) not in response.text
+
+
+def test_volatile_htmx_regions_have_standalone_refresh_routes(settings) -> None:
+    app = create_app(settings)
+
+    with app.get_testclient() as client:
+        overview = client.get("/")
+        attention = client.get("/fragments/attention", headers={"HX-Request": "true"})
+        system = client.get("/fragments/system-health", headers={"HX-Request": "true"})
+
+    assert 'hx-get="/fragments/attention"' in overview.text
+    assert attention.status_code == 200
+    assert 'id="attention-region"' in attention.text
+    assert system.status_code == 200
+    assert 'id="system-health-region"' in system.text
 
 
 def test_order_page_uses_current_revision_listing_name(
