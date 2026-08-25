@@ -134,3 +134,18 @@ def test_prepare_private_directories_accepts_already_private_directory(
 
     assert value.raw_email_dir.is_dir()
     assert stat.S_IMODE(value.raw_email_dir.stat().st_mode) == 0o700
+
+
+def test_gmail_private_paths_are_derived_from_data_directory(
+    tmp_path: Path, settings: Settings
+) -> None:
+    value = _settings_for(tmp_path / "private", settings.migrations_dir)
+
+    assert value.gmail_dir == value.data_dir / "gmail"
+    assert value.gmail_client_secrets_path == value.data_dir / "gmail" / "client_secret.json"
+    assert value.gmail_token_path == value.data_dir / "gmail" / "token.json"
+
+    value.prepare_gmail_directory()
+
+    assert value.gmail_dir.is_dir()
+    assert stat.S_IMODE(value.gmail_dir.stat().st_mode) == 0o700

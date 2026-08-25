@@ -48,7 +48,8 @@ def _ensure_private_directory(path: Path) -> None:
 class Settings:
     """Filesystem and server settings.
 
-    Secrets are intentionally absent from the first implementation slice.
+    Gmail credential locations are derived from the private data directory so
+    secrets never need to appear in the production environment file.
     """
 
     environment: str
@@ -67,6 +68,18 @@ class Settings:
     @property
     def enforce_safe_sqlite(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def gmail_dir(self) -> Path:
+        return self.data_dir / "gmail"
+
+    @property
+    def gmail_client_secrets_path(self) -> Path:
+        return self.gmail_dir / "client_secret.json"
+
+    @property
+    def gmail_token_path(self) -> Path:
+        return self.gmail_dir / "token.json"
 
     def with_database(self, database_path: Path) -> Settings:
         expanded = database_path.expanduser()
@@ -93,6 +106,10 @@ class Settings:
         _ensure_private_directory(self.data_dir)
         self.prepare_database_directory()
         _ensure_private_directory(self.raw_email_dir)
+
+    def prepare_gmail_directory(self) -> None:
+        _ensure_private_directory(self.data_dir)
+        _ensure_private_directory(self.gmail_dir)
 
 
 def load_settings() -> Settings:

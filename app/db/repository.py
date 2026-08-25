@@ -18,7 +18,7 @@ from app.email.normalize import (
     provisional_product_key,
     utc_iso,
 )
-from app.models import ImportResult, ParsedEmail, ParsedItem, ParsedOrder
+from app.models import GmailSyncState, ImportResult, ParsedEmail, ParsedItem, ParsedOrder
 
 
 class NeedsReviewError(RuntimeError):
@@ -103,59 +103,158 @@ def find_source_by_sha(database_path: Path, raw_sha256: str) -> sqlite3.Row | No
         connection.close()
 
 
+def _email_by_identity(
+    connection: sqlite3.Connection,
+    *,
+    source_message_key: str,
+    raw_sha256: str,
+    gmail_message_id: str | None,
+) -> sqlite3.Row | None:
+    if gmail_message_id is not None:
+        row = connection.execute(
+            "SELECT * FROM email_messages WHERE gmail_message_id = ?",
+            (gmail_message_id,),
+        ).fetchone()
+        if row is not None:
+            if row["raw_sha256"] != raw_sha256:
+                raise NeedsReviewError("Gmail message ID belongs to different raw bytes")
+            return row
+    row = connection.execute(
+        "SELECT * FROM email_messages WHERE raw_sha256 = ?", (raw_sha256,)
+    ).fetchone()
+    if row is not None:
+        return row
+    row = connection.execute(
+        "SELECT * FROM email_messages WHERE source_message_key = ?",
+        (source_message_key,),
+    ).fetchone()
+    if row is not None and row["raw_sha256"] != raw_sha256:
+        raise NeedsReviewError("source message key already belongs to different raw bytes")
+    return row
+
+
+def _attach_gmail_metadata(
+    connection: sqlite3.Connection,
+    *,
+    email_id: int,
+    gmail_message_id: str | None,
+    gmail_thread_id: str | None,
+    gmail_internal_at: str | None,
+) -> None:
+    if gmail_message_id is None:
+        return
+    current = connection.execute(
+        "SELECT gmail_message_id FROM email_messages WHERE id = ?", (email_id,)
+    ).fetchone()
+    if current is None:
+        raise RuntimeError("email source disappeared while attaching Gmail metadata")
+    # Migration 001 intentionally models one Gmail acquisition per exact raw
+    # message. If Gmail exposes identical bytes under a second ID, the raw source
+    # still deduplicates safely; a later multi-account migration can retain every
+    # acquisition locator if that case proves useful.
+    if current["gmail_message_id"] not in {None, gmail_message_id}:
+        return
+    connection.execute(
+        """
+        UPDATE email_messages
+        SET gmail_message_id = ?, gmail_thread_id = ?, gmail_internal_at = ?,
+            fetched_at = ?
+        WHERE id = ?
+        """,
+        (gmail_message_id, gmail_thread_id, gmail_internal_at, _utc_now(), email_id),
+    )
+
+
 def _insert_email(
     connection: sqlite3.Connection, parsed: ParsedEmail, archived: ArchivedSource
 ) -> sqlite3.Row:
     metadata = parsed.metadata
     now = _utc_now()
-    connection.execute(
-        """
-        INSERT INTO email_messages (
-            source_kind, source_message_key, gmail_message_id, gmail_thread_id,
-            rfc822_message_id, original_message_id, source_fingerprint, sender,
-            recipient, subject, received_at, gmail_internal_at, source_sent_at,
-            raw_sha256, raw_path, parse_status, parser_version, fetched_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-        ON CONFLICT(source_message_key) DO UPDATE SET
-            source_kind = excluded.source_kind,
-            gmail_message_id = excluded.gmail_message_id,
-            gmail_thread_id = excluded.gmail_thread_id,
-            rfc822_message_id = excluded.rfc822_message_id,
-            original_message_id = excluded.original_message_id,
-            source_fingerprint = excluded.source_fingerprint,
-            sender = excluded.sender,
-            recipient = excluded.recipient,
-            subject = excluded.subject,
-            received_at = excluded.received_at,
-            source_sent_at = excluded.source_sent_at,
-            parser_version = excluded.parser_version,
-            fetched_at = excluded.fetched_at
-        WHERE email_messages.parse_status <> 'parsed'
-        """,
-        (
-            metadata.source_kind,
-            metadata.source_message_key,
-            metadata.gmail_message_id,
-            metadata.gmail_thread_id,
-            metadata.rfc822_message_id,
-            metadata.original_message_id,
-            metadata.source_fingerprint,
-            metadata.sender,
-            metadata.recipient,
-            metadata.subject,
-            utc_iso(metadata.received_at),
-            None,
-            utc_iso(metadata.source_sent_at) if metadata.source_sent_at else None,
-            archived.sha256,
-            str(archived.path),
-            parsed.parser_version,
-            now,
-        ),
+    gmail_internal_at = utc_iso(metadata.gmail_internal_at) if metadata.gmail_internal_at else None
+    row = _email_by_identity(
+        connection,
+        source_message_key=metadata.source_message_key,
+        raw_sha256=archived.sha256,
+        gmail_message_id=metadata.gmail_message_id,
     )
-    row = connection.execute(
-        "SELECT id, parse_status, raw_sha256 FROM email_messages WHERE source_message_key = ?",
-        (metadata.source_message_key,),
-    ).fetchone()
+    if row is not None:
+        email_id = int(row["id"])
+        _attach_gmail_metadata(
+            connection,
+            email_id=email_id,
+            gmail_message_id=metadata.gmail_message_id,
+            gmail_thread_id=metadata.gmail_thread_id,
+            gmail_internal_at=gmail_internal_at,
+        )
+        if row["parse_status"] != "parsed":
+            connection.execute(
+                """
+                UPDATE email_messages
+                SET rfc822_message_id = ?, original_message_id = ?,
+                    source_fingerprint = ?, sender = ?, recipient = ?, subject = ?,
+                    received_at = ?, source_sent_at = ?, parser_version = ?, fetched_at = ?
+                WHERE id = ?
+                """,
+                (
+                    metadata.rfc822_message_id,
+                    metadata.original_message_id,
+                    metadata.source_fingerprint,
+                    metadata.sender,
+                    metadata.recipient,
+                    metadata.subject,
+                    utc_iso(metadata.received_at),
+                    utc_iso(metadata.source_sent_at) if metadata.source_sent_at else None,
+                    parsed.parser_version,
+                    now,
+                    email_id,
+                ),
+            )
+        return connection.execute(
+            "SELECT id, parse_status, raw_sha256 FROM email_messages WHERE id = ?",
+            (email_id,),
+        ).fetchone()
+
+    try:
+        connection.execute(
+            """
+            INSERT INTO email_messages (
+                source_kind, source_message_key, gmail_message_id, gmail_thread_id,
+                rfc822_message_id, original_message_id, source_fingerprint, sender,
+                recipient, subject, received_at, gmail_internal_at, source_sent_at,
+                raw_sha256, raw_path, parse_status, parser_version, fetched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            ON CONFLICT(source_message_key) DO NOTHING
+            """,
+            (
+                metadata.source_kind,
+                metadata.source_message_key,
+                metadata.gmail_message_id,
+                metadata.gmail_thread_id,
+                metadata.rfc822_message_id,
+                metadata.original_message_id,
+                metadata.source_fingerprint,
+                metadata.sender,
+                metadata.recipient,
+                metadata.subject,
+                utc_iso(metadata.received_at),
+                gmail_internal_at,
+                utc_iso(metadata.source_sent_at) if metadata.source_sent_at else None,
+                archived.sha256,
+                str(archived.path),
+                parsed.parser_version,
+                now,
+            ),
+        )
+    except sqlite3.IntegrityError:
+        # A concurrent import can win either the source-key, Gmail-ID, or raw-hash
+        # uniqueness race. Re-resolve the winner and validate its raw identity.
+        pass
+    row = _email_by_identity(
+        connection,
+        source_message_key=metadata.source_message_key,
+        raw_sha256=archived.sha256,
+        gmail_message_id=metadata.gmail_message_id,
+    )
     if row is None:
         raise RuntimeError("source row was not created")
     if row["raw_sha256"] != archived.sha256:
@@ -489,44 +588,218 @@ def record_failed_source(
     received_at: datetime,
     error: str,
     needs_review: bool = False,
+    source_kind: str = "manual",
+    gmail_message_id: str | None = None,
+    gmail_thread_id: str | None = None,
+    gmail_internal_at: datetime | None = None,
 ) -> int:
+    if source_kind not in {"manual", "gmail"}:
+        raise ValueError("source kind must be 'manual' or 'gmail'")
+    if source_kind == "gmail" and (
+        gmail_message_id is None or gmail_thread_id is None or gmail_internal_at is None
+    ):
+        raise ValueError("Gmail failures require message, thread, and internal timestamp metadata")
     now = _utc_now()
     status = "needs_review" if needs_review else "failed"
+    gmail_internal_text = utc_iso(gmail_internal_at) if gmail_internal_at else None
+    connection = connect_database(database_path)
+    try:
+        with transaction(connection):
+            row = _email_by_identity(
+                connection,
+                source_message_key=source_message_key,
+                raw_sha256=archived.sha256,
+                gmail_message_id=gmail_message_id,
+            )
+            if row is not None:
+                email_id = int(row["id"])
+                _attach_gmail_metadata(
+                    connection,
+                    email_id=email_id,
+                    gmail_message_id=gmail_message_id,
+                    gmail_thread_id=gmail_thread_id,
+                    gmail_internal_at=gmail_internal_text,
+                )
+                connection.execute(
+                    """
+                    UPDATE email_messages
+                    SET sender = ?, recipient = ?, subject = ?, received_at = ?,
+                        parse_status = ?, parse_error = ?, fetched_at = ?
+                    WHERE id = ? AND parse_status <> 'parsed'
+                    """,
+                    (
+                        sender,
+                        recipient,
+                        subject,
+                        utc_iso(received_at),
+                        status,
+                        error[:1000],
+                        now,
+                        email_id,
+                    ),
+                )
+                return email_id
+
+            try:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO email_messages (
+                        source_kind, source_message_key, gmail_message_id,
+                        gmail_thread_id, source_fingerprint, sender, recipient,
+                        subject, received_at, gmail_internal_at, raw_sha256,
+                        raw_path, parse_status, parse_error, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        source_kind,
+                        source_message_key,
+                        gmail_message_id,
+                        gmail_thread_id,
+                        archived.sha256,
+                        sender,
+                        recipient,
+                        subject,
+                        utc_iso(received_at),
+                        gmail_internal_text,
+                        archived.sha256,
+                        str(archived.path),
+                        status,
+                        error[:1000],
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                row = _email_by_identity(
+                    connection,
+                    source_message_key=source_message_key,
+                    raw_sha256=archived.sha256,
+                    gmail_message_id=gmail_message_id,
+                )
+                if row is None:
+                    raise
+                return int(row["id"])
+            if cursor.lastrowid is None:
+                raise RuntimeError("failed source insert did not return an identifier")
+            return int(cursor.lastrowid)
+    finally:
+        connection.close()
+
+
+def _database_datetime(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value is not None else None
+
+
+def get_gmail_sync_state(database_path: Path, account_key: str) -> GmailSyncState | None:
+    connection = connect_database(database_path)
+    try:
+        row = connection.execute(
+            "SELECT * FROM email_sync_state WHERE account_key = ?", (account_key,)
+        ).fetchone()
+        if row is None:
+            return None
+        scan_watermark_at = _database_datetime(str(row["scan_watermark_at"]))
+        updated_at = _database_datetime(str(row["updated_at"]))
+        if scan_watermark_at is None or updated_at is None:
+            raise RuntimeError("Gmail sync state contains an invalid required timestamp")
+        return GmailSyncState(
+            account_key=str(row["account_key"]),
+            gmail_history_id=(
+                str(row["gmail_history_id"]) if row["gmail_history_id"] is not None else None
+            ),
+            scan_watermark_at=scan_watermark_at,
+            overlap_seconds=int(row["overlap_seconds"]),
+            last_success_at=_database_datetime(row["last_success_at"]),
+            last_error_at=_database_datetime(row["last_error_at"]),
+            last_error=str(row["last_error"]) if row["last_error"] is not None else None,
+            updated_at=updated_at,
+        )
+    finally:
+        connection.close()
+
+
+def record_gmail_sync_success(
+    database_path: Path,
+    *,
+    account_key: str,
+    history_id: str,
+    scan_watermark_at: datetime,
+    overlap_seconds: int = 86_400,
+) -> None:
+    if not history_id or not history_id.isdecimal():
+        raise ValueError("Gmail history ID must contain decimal digits")
+    if scan_watermark_at.utcoffset() is None:
+        raise ValueError("Gmail scan watermark must be timezone-aware")
+    if overlap_seconds < 0:
+        raise ValueError("Gmail overlap must not be negative")
+    now = _utc_now()
     connection = connect_database(database_path)
     try:
         with transaction(connection):
             connection.execute(
                 """
-                INSERT INTO email_messages (
-                    source_kind, source_message_key, source_fingerprint, sender,
-                    recipient, subject, received_at, raw_sha256, raw_path,
-                    parse_status, parse_error, fetched_at
-                ) VALUES ('manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(source_message_key) DO UPDATE SET
-                    parse_status = excluded.parse_status,
-                    parse_error = excluded.parse_error,
-                    fetched_at = excluded.fetched_at
-                WHERE email_messages.parse_status <> 'parsed'
+                INSERT INTO email_sync_state (
+                    account_key, gmail_history_id, scan_watermark_at,
+                    overlap_seconds, last_success_at, last_error_at,
+                    last_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
+                ON CONFLICT(account_key) DO UPDATE SET
+                    gmail_history_id = excluded.gmail_history_id,
+                    scan_watermark_at = excluded.scan_watermark_at,
+                    overlap_seconds = excluded.overlap_seconds,
+                    last_success_at = excluded.last_success_at,
+                    last_error_at = NULL,
+                    last_error = NULL,
+                    updated_at = excluded.updated_at
                 """,
                 (
-                    source_message_key,
-                    archived.sha256,
-                    sender,
-                    recipient,
-                    subject,
-                    utc_iso(received_at),
-                    archived.sha256,
-                    str(archived.path),
-                    status,
-                    error[:1000],
+                    account_key,
+                    history_id,
+                    utc_iso(scan_watermark_at),
+                    overlap_seconds,
+                    now,
                     now,
                 ),
             )
-            return int(
-                connection.execute(
-                    "SELECT id FROM email_messages WHERE source_message_key = ?",
-                    (source_message_key,),
-                ).fetchone()[0]
+    finally:
+        connection.close()
+
+
+def record_gmail_sync_error(
+    database_path: Path,
+    *,
+    account_key: str,
+    scan_watermark_at: datetime,
+    error_code: str,
+    overlap_seconds: int = 86_400,
+) -> None:
+    if scan_watermark_at.utcoffset() is None:
+        raise ValueError("Gmail scan watermark must be timezone-aware")
+    if not error_code or len(error_code) > 200:
+        raise ValueError("Gmail sync error must be a short stable code")
+    now = _utc_now()
+    connection = connect_database(database_path)
+    try:
+        with transaction(connection):
+            connection.execute(
+                """
+                INSERT INTO email_sync_state (
+                    account_key, gmail_history_id, scan_watermark_at,
+                    overlap_seconds, last_success_at, last_error_at,
+                    last_error, updated_at
+                ) VALUES (?, NULL, ?, ?, NULL, ?, ?, ?)
+                ON CONFLICT(account_key) DO UPDATE SET
+                    last_error_at = excluded.last_error_at,
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    account_key,
+                    utc_iso(scan_watermark_at),
+                    overlap_seconds,
+                    now,
+                    error_code,
+                    now,
+                ),
             )
     finally:
         connection.close()

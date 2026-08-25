@@ -18,7 +18,7 @@ from app.db.repository import (
 )
 from app.email.archive import MAX_EMAIL_BYTES, archive_raw_email
 from app.email.parsers import UnsupportedEmailError, parse_order_email
-from app.models import ImportResult
+from app.models import GmailSource, ImportResult
 
 
 def _failure_headers(raw: bytes) -> tuple[str, str | None, str, datetime]:
@@ -102,3 +102,80 @@ def import_eml(path: Path, settings: Settings) -> ImportResult:
     if not raw:
         raise ValueError("email is empty")
     return import_raw_email(raw, settings)
+
+
+def import_gmail_raw_email(
+    raw: bytes,
+    settings: Settings,
+    *,
+    source: GmailSource,
+    provenance_verified: bool,
+    provenance_code: str,
+) -> ImportResult:
+    """Archive and import one Gmail RAW response with trusted API metadata.
+
+    Gmail mailbox membership and an inner From header are not authentication.
+    Callers must pass the fail-closed result of the provenance verifier. An
+    unverified or unsupported candidate is durably retained for review, without
+    creating order facts.
+    """
+
+    settings.prepare_private_directories()
+    archived = archive_raw_email(raw, settings.raw_email_dir, namespace="gmail")
+    sender, recipient, subject, received_at = _failure_headers(raw)
+    failure_arguments = {
+        "source_message_key": source.source_message_key,
+        "sender": sender,
+        "recipient": recipient,
+        "subject": subject,
+        "received_at": received_at,
+        "needs_review": True,
+        "source_kind": "gmail",
+        "gmail_message_id": source.message_id,
+        "gmail_thread_id": source.thread_id,
+        "gmail_internal_at": source.internal_at,
+    }
+    if not provenance_verified:
+        email_id = record_failed_source(
+            settings.database_path,
+            archived,
+            error=f"E_GMAIL_PROVENANCE:{provenance_code}"[:1000],
+            **failure_arguments,
+        )
+        return ImportResult(
+            outcome="needs_review",
+            email_message_id=email_id,
+            archived_path=str(archived.path),
+        )
+
+    try:
+        parsed = parse_order_email(
+            raw,
+            source_message_key=source.source_message_key,
+            allow_synthetic_fixtures=settings.allow_synthetic_fixtures,
+        )
+        metadata = parsed.metadata.model_copy(
+            update={
+                "source_kind": "gmail",
+                "gmail_message_id": source.message_id,
+                "gmail_thread_id": source.thread_id,
+                "gmail_internal_at": source.internal_at,
+            }
+        )
+        return persist_parsed_email(
+            settings.database_path,
+            parsed.model_copy(update={"metadata": metadata}),
+            archived,
+        )
+    except (UnsupportedEmailError, NeedsReviewError) as error:
+        email_id = record_failed_source(
+            settings.database_path,
+            archived,
+            error=str(error),
+            **failure_arguments,
+        )
+        return ImportResult(
+            outcome="needs_review",
+            email_message_id=email_id,
+            archived_path=str(archived.path),
+        )

@@ -25,7 +25,44 @@ class EmailMetadata(StrictModel):
     recipient: str | None = None
     subject: str
     received_at: datetime
+    gmail_internal_at: datetime | None = None
     source_sent_at: datetime | None = None
+
+    @field_validator("received_at", "gmail_internal_at", "source_sent_at")
+    @classmethod
+    def require_email_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError("email timestamps must be timezone-aware")
+        return value
+
+
+class GmailSource(StrictModel):
+    account_key: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    message_id: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")
+    thread_id: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")
+    internal_at: datetime
+
+    @field_validator("internal_at")
+    @classmethod
+    def require_internal_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError("Gmail internal timestamp must be timezone-aware")
+        return value
+
+    @property
+    def source_message_key(self) -> str:
+        return f"gmail:{self.account_key}:{self.message_id}"
+
+
+class GmailSyncState(StrictModel):
+    account_key: str
+    gmail_history_id: str | None = None
+    scan_watermark_at: datetime
+    overlap_seconds: int = Field(ge=0)
+    last_success_at: datetime | None = None
+    last_error_at: datetime | None = None
+    last_error: str | None = None
+    updated_at: datetime
 
 
 class ParsedItem(StrictModel):
@@ -114,7 +151,7 @@ class ParsedEmail(StrictModel):
 
 
 class ImportResult(StrictModel):
-    outcome: Literal["imported", "duplicate_source", "duplicate_revision"]
+    outcome: Literal["imported", "duplicate_source", "duplicate_revision", "needs_review"]
     email_message_id: int
     order_id: int | None = None
     order_revision_id: int | None = None

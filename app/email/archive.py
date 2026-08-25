@@ -7,8 +7,11 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 MAX_EMAIL_BYTES = 20 * 1024 * 1024
+ArchiveNamespace = Literal["manual", "gmail"]
+_ARCHIVE_NAMESPACES = frozenset({"manual", "gmail"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,17 +38,23 @@ def _ensure_synced_directory(path: Path, parent: Path) -> None:
         _fsync_directory(parent)
 
 
-def archive_raw_email(raw: bytes, root: Path) -> ArchivedSource:
+def archive_raw_email(
+    raw: bytes,
+    root: Path,
+    namespace: ArchiveNamespace = "manual",
+) -> ArchivedSource:
     if not raw:
         raise ValueError("email is empty")
     if len(raw) > MAX_EMAIL_BYTES:
         raise ValueError(f"email exceeds the {MAX_EMAIL_BYTES}-byte limit")
+    if namespace not in _ARCHIVE_NAMESPACES:
+        raise ValueError("archive namespace must be 'manual' or 'gmail'")
 
     digest = hashlib.sha256(raw).hexdigest()
-    manual_dir = root / "manual"
-    directory = manual_dir / digest[:2]
-    _ensure_synced_directory(manual_dir, root)
-    _ensure_synced_directory(directory, manual_dir)
+    namespace_dir = root / namespace
+    directory = namespace_dir / digest[:2]
+    _ensure_synced_directory(namespace_dir, root)
+    _ensure_synced_directory(directory, namespace_dir)
     target = directory / f"{digest}.eml"
     if target.exists():
         if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
