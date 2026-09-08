@@ -2,7 +2,7 @@
 
 Parent: ../map.md
 Type: task
-Status: open
+Status: claimed
 Blocked by: 15
 
 ## Goal and contracts
@@ -33,33 +33,35 @@ snapshot; no operation performs model/network work inside its transaction.
 
 ## Implementation steps and checks
 
-- [ ] Write file-backed migration tests for fresh/current databases, preserved
+- [x] Write file-backed migration tests for fresh/current databases, preserved
   ingestion facts, checksums/dirty state, and schema verification failures. Apply
   only through `shopping migrate`; verify the built wheel includes both migrations.
-- [ ] Implement atomic first-message acceptance: create the Conversation only on
+- [x] Implement atomic first-message acceptance: create the Conversation only on
   accepted submission, derive title locally, save message and attempt before any
   future acknowledgement/generation. Fix endpoint/model identity on creation.
-- [ ] Persist command IDs with canonical command content and outcomes. Test duplicate
+- [x] Persist command IDs with canonical command content and outcomes. Test duplicate
   submit and Retry return the existing result, conflicting reuse fails, and stale
   commands cannot recreate deleted Conversations. Keep only the minimal creation/
   deduplication fencing needed; no token event-replay table.
-- [ ] Implement paginated history and bounded context selection. Retain failed
+- [x] Implement paginated history and bounded context selection. Retain failed
   attempts for display but exclude their text/orphaned tool results from model input.
   Retry is only for the latest unsuccessful attempt before a later user message;
   keep its original submitted message once and use fresh tool reads.
-- [ ] Implement monotonic saved checkpoints and terminal transitions. Test
+- [x] Implement monotonic saved checkpoints and terminal transitions. Test
   persistence failure rolls back a checkpoint, accepted Stop fences late completion,
   completed-first stays complete, and wrong/stale attempt targets cannot affect a
   newer attempt. Local Stopping and interrupted/failure outcomes stay distinguishable.
-- [ ] Implement deletion fencing before local cleanup, followed by confirmed
+- [x] Implement deletion fencing before local cleanup, followed by confirmed
   removal of only Conversation-owned records. Late writes cannot resurrect data;
   failed cleanup/deletion must remain recoverable. Shopping facts and raw emails
   are untouched; do not promise removal from existing backups.
-- [ ] Add startup recovery operation marking unfinished attempts interrupted before
+- [x] Add startup recovery operation marking unfinished attempts interrupted before
   new work; wire it into app lifecycle in ticket 17, never rerun questions. Test
   simultaneous requests using separate same-thread connections and short transactions.
-- [ ] Complete focused/shared checks and deploy the additive migration through the
-  verified backup path. Check rollback to the previous application/database state.
+- [x] Complete focused/shared checks locally, including a verified pre-migration
+  backup and restore check after a failed additive migration.
+- [ ] Deploy the additive migration through the verified backup path and check
+  rollback to the previous application/database state on the homelab.
 
 ```bash
 uv run --locked pytest -q tests/test_conversations.py tests/test_migrations.py tests/test_repository.py
@@ -70,3 +72,30 @@ uv run --locked pytest -q tests/test_conversations.py tests/test_migrations.py t
 The schema and lifecycle operations are deployed and tested; no unprotected Chat
 mutation endpoint is exposed yet. Ticket 17 consumes saved-state operations and
 ticket 15 runtime updates, committing before broadcasting them.
+
+## Local implementation checkpoint
+
+Continuing locally by operator request. Ticket 15 provides the implemented runtime;
+its host deployment is still pending. Tests use the ticket-defined repository and
+migration/package boundaries. Host migration and rollback validation remain a
+separate deployment checkpoint.
+
+## Implementation result — 8 September 2026
+
+Implemented locally with functions in `app/assistant/conversations.py`, reusing
+existing SQLite connection/transaction and read-tool validation. Migration 002 adds
+immutable submitted messages, fixed-identity Conversations, versioned attempts and
+bounded tool records. Accepted commands are atomic and deduplicated; deleted keys
+return gone with their content fingerprints removed. Stop/delete fencing, latest-only
+Retry, paginated history, complete-only context and startup interruption are covered.
+There is no new Chat route or startup wiring; ticket 17 owns that integration.
+
+Validation: 248 tests passed, one opt-in model test skipped; formatting, lint,
+typechecking and the normal secret scan passed. Both code-review axes reported no
+blocking findings. The built wheel contains migrations 001 and 002, installs with
+locked production dependencies, and runs `shopping migrate` to schema 2 in an
+isolated temporary environment. A local failed-migration check restores schema 1
+and purchase facts from a verified backup. This is not a homelab deployment drill.
+
+Status remains claimed because the operator requested local implementation and
+the host deployment/rollback checkpoint remains pending.

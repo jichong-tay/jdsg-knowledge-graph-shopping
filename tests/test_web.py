@@ -28,7 +28,7 @@ def test_dashboard_health_and_order_page(settings, fixture_dir: Path) -> None:
     assert "EXAMPLE01" in dashboard.text
     assert health.status_code == 200
     assert health.json()["ready"] is get_runtime_info().sqlite_wal_safe
-    assert health.json()["database"]["schema_version"] == 1
+    assert health.json()["database"]["schema_version"] == 2
     assert order.status_code == 200
     assert "Example Oat Drink 1L" in order.text
     assert "SGD 14.00" in order.text

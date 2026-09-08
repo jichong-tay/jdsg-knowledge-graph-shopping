@@ -9,7 +9,7 @@ Initial data source: one frequently used online grocery retailer
 
 The immediate MVP is an Ollama-only Shopping Assistant on the existing homelab deployment: open the dedicated Chat page through Tailscale, ask about receipt items and purchase history, and receive answers supported by four application-owned SQLite read tools. Use the agreed durable conversation, streaming, Stop, retry, and reconnect behavior, with a small Python agent loop. The tools are `search_products`, `get_product_history`, `list_recent_orders`, and `get_order`; they include all current receipt items, and the extracted delivery date is used as Purchase date by operator convention.
 
-The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [implementation plan](../.scratch/shopping-assistant/implementation-plan.md) and tickets 14–18 define the queued work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Tickets 14 and 15 now have local implementations: bounded purchase-history tools, product evidence pages, and the native Qwen backend. A synthetic local-loop/homelab-model check passed; deployment, saved Conversations and browser Chat remain pending.
+The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [implementation plan](../.scratch/shopping-assistant/implementation-plan.md) and tickets 14–18 define the queued work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Tickets 14–16 now have local implementations: bounded purchase-history tools, product evidence pages, the native Qwen backend, and saved Conversation lifecycle operations. A synthetic local-loop/homelab-model check passed; deployment and browser Chat remain pending.
 
 The broader roadmap below also describes replenishment predictions, graph relationships, shopping-list writes, and Telegram alerts. Those features are later work and are not prerequisites for the immediate chatbot MVP. Durable purchases remain searchable without generating inappropriate replenishment alerts.
 
@@ -547,41 +547,72 @@ CREATE TABLE shopping_list_items (
     CHECK ((status = 'purchased' AND purchased_at IS NOT NULL) OR status <> 'purchased')
 ) STRICT;
 
+-- Keys outlive deletion to fence stale draft submissions, without retaining content.
+CREATE TABLE conversation_keys (
+    id TEXT PRIMARY KEY,
+    consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0, 1))
+) STRICT;
+
 CREATE TABLE conversations (
-    id          INTEGER PRIMARY KEY,
-    title       TEXT,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    id TEXT PRIMARY KEY REFERENCES conversation_keys(id),
+    title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 80),
+    endpoint TEXT NOT NULL,
+    model TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+    deleting INTEGER NOT NULL DEFAULT 0 CHECK (deleting IN (0, 1)),
+    created_at TEXT NOT NULL,
+    activity_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX idx_conversation_activity ON conversations(activity_at DESC, id DESC);
+
+CREATE TABLE conversation_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+    created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX idx_conversation_messages ON conversation_messages(conversation_id, id);
+CREATE TRIGGER immutable_submitted_message BEFORE UPDATE ON conversation_messages
+BEGIN SELECT RAISE(ABORT, 'Submitted messages are immutable'); END;
+
+CREATE TABLE response_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES conversation_messages(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'stopping', 'complete', 'failed', 'stopped', 'interrupted')),
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+    text TEXT NOT NULL DEFAULT '' CHECK (length(CAST(text AS BLOB)) <= 65536),
+    code TEXT,
+    evidence_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(evidence_json)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX idx_attempt_message ON response_attempts(message_id, id);
+-- There is one application-wide response slot, including cancellation cleanup.
+CREATE UNIQUE INDEX idx_one_active_response ON response_attempts((1))
+    WHERE status IN ('running', 'stopping');
+
+CREATE TABLE conversation_tools (
+    attempt_id INTEGER NOT NULL REFERENCES response_attempts(id) ON DELETE CASCADE,
+    call_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 8),
+    name TEXT NOT NULL,
+    arguments_json TEXT NOT NULL CHECK (json_valid(arguments_json)
+        AND length(CAST(arguments_json AS BLOB)) <= 4096),
+    result_json TEXT CHECK (result_json IS NULL OR (json_valid(result_json)
+        AND length(CAST(result_json AS BLOB)) <= 4096)),
+    PRIMARY KEY (attempt_id, call_id),
+    UNIQUE (attempt_id, position)
 ) STRICT;
 
-CREATE TABLE chat_messages (
-    id               INTEGER PRIMARY KEY,
-    conversation_id  INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    role             TEXT NOT NULL CHECK (role IN ('system','user','assistant','tool')),
-    content          TEXT NOT NULL,
-    model            TEXT,
-    created_at       TEXT NOT NULL
+-- Only identifiers survive deletion. No message, title or tool content is kept here.
+CREATE TABLE conversation_commands (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversation_keys(id),
+    fingerprint TEXT,
+    outcome_json TEXT NOT NULL CHECK (json_valid(outcome_json))
 ) STRICT;
-
-CREATE INDEX idx_chat_messages_conversation
-    ON chat_messages(conversation_id, id);
-
-CREATE TABLE tool_calls (
-    id                    INTEGER PRIMARY KEY,
-    conversation_id       INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    assistant_message_id  INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
-    tool_name             TEXT NOT NULL,
-    arguments_json        TEXT NOT NULL CHECK (json_valid(arguments_json)),
-    result_json           TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
-    confirmation_token_hash TEXT,
-    confirmation_expires_at TEXT,
-    confirmed_at          TEXT,
-    status                TEXT NOT NULL
-                          CHECK (status IN ('requested','awaiting_confirmation','succeeded','failed','denied','cancelled')),
-    started_at            TEXT NOT NULL,
-    finished_at           TEXT,
-    error                 TEXT
-) STRICT;
+CREATE INDEX idx_conversation_commands ON conversation_commands(conversation_id);
 
 CREATE TABLE notification_channels (
     id                 INTEGER PRIMARY KEY,
@@ -676,7 +707,8 @@ CREATE INDEX idx_graph_edges_target
 ### Migration and backup protocol
 
 - `app/migrations/001_ingestion.sql` contains only the migration ledger, email sync/messages, retailers, brands, categories, products, retailer products/aliases, orders, revisions/source associations, and items required for the first vertical slice.
-- Analytics, chat, notification, and graph tables are introduced by later numbered migrations when their milestone begins.
+- `app/migrations/002_conversations.sql` implements the Conversation tables shown above, including attempts, bounded tool records, command outcomes, and content-free creation/deletion fences. Submitted messages are immutable; deleting a Conversation cascades only through its messages, attempts and tools. Command fingerprints/outcomes are scrubbed to a minimal gone result on deletion.
+- Analytics, notification, and graph tables remain targets for later numbered migrations.
 - Each migration has a recorded SHA-256 checksum and dirty/in-progress state. Only one migration process may run at a time.
 - Deployment runs the migration one-shot synchronously before starting the web
   service. Web and future timer commands verify that the schema is current and

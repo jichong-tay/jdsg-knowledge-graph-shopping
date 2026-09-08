@@ -37,7 +37,7 @@ already installed `qwen3.5:9b`, with thinking disabled. Actual model/tool operat
 still needs an integration check, not a prerequisite model comparison; cloud
 providers and agent-framework comparisons are deferred.
 Wayfinder planning is complete; the five [implementation tasks](.scratch/shopping-assistant/implementation-plan.md)
-are underway: purchase-history tools and the local Qwen backend are implemented. Deploy working,
+are underway: purchase-history tools, the local Qwen backend, and conversation persistence are implemented. Deploy working,
 checked increments frequently to the experimental homelab rather than waiting for
 the whole Chat feature. The browser Chat page and backend deployment remain pending.
 
@@ -133,7 +133,7 @@ internals are returned, and no shopping data or schema changes are made.
 returns a complete, incomplete, or rejected result. Optional asynchronous callbacks
 receive provisional text, correlated tool activity/results, and a terminal event.
 `availability()` reports only the local response slot; it never loads a model.
-There is no Chat route, conversation persistence, or model-management command yet.
+There is no Chat route or model-management command yet.
 
 The backend uses installed `qwen3.5:9b`, `think: false`, 8,192 context tokens, 768
 output tokens, and a five-minute keep-alive. It allows one active attempt, at most
@@ -172,6 +172,49 @@ SHOPPING_OLLAMA_SMOKE=1 uv run --locked pytest -q -s tests/integration/test_olla
 The local loop passed a synthetic tool round trip against the homelab model through
 an SSH relay. Backend deployment and verification inside the effective systemd
 service context remain pending; see the deployment guide for the checkpoint record.
+
+## Saved conversations
+
+Migration `002_conversations.sql` adds saved Conversations, immutable submitted
+messages, Response Attempts, bounded tool records, and command deduplication.
+Run `shopping migrate` before using this code with an existing database; startup
+only verifies the schema. There is no browser Chat mutation route yet.
+
+`app.assistant.conversations` uses short-lived SQLite connections and functions:
+
+- `new_draft()` issues a creation key without saving a Conversation. `accept_command()`
+  accepts submit, Retry, Stop, rename, or confirmed delete. First submission saves
+  its locally derived title, fixed endpoint/model, message, and attempt atomically.
+- `command_status()` resolves uncertain acknowledgements. An identical accepted
+  command returns its original outcome; changed content under that ID is rejected.
+  The caller must use the saved snapshot to obtain subsequent state.
+- `checkpoint()` and `record_tool()` compare attempt versions and commit before the
+  caller broadcasts. Stop saves Stopping before cleanup; completion cannot overwrite
+  it. Storage failures propagate, with the entire operation rolled back.
+- `get_conversation()`, `get_attempt()`, and paginated `history()` restore saved state.
+  `context_for_attempt()` selects at most 16 recent complete exchanges / 256 KiB;
+  the runtime then applies its exact token budget. Failed text and orphaned tool
+  results stay visible in history but never enter model context.
+- `interrupt_unfinished()` marks active attempts interrupted at startup, without
+  resubmitting. `finalize_delete()` removes owned records after confirmed cleanup.
+  Startup wiring and browser coordination belong to the next ticket.
+
+There is one active saved attempt globally, including Stopping, with no queue.
+Retry creates a fresh attempt for the latest unsuccessful response and keeps its
+original question once. A changed endpoint/model keeps history readable but requires
+creating a new Conversation to submit more work.
+
+History pages are capped at 50 attempts and 256 KiB (default 20); individual records
+may exceed the future 64 KiB browser frame and must be chunked by that transport.
+Response text is capped at 64 KiB including JSON encoding; each of at most eight
+tools retains bounded 4 KiB arguments and 4 KiB results. No token-event log is stored.
+
+Deletion first fences writes and remains recoverable if cleanup/removal fails.
+It removes Conversation-owned content from the active database, preserving purchase
+facts, archives, and existing backups. Only creation/command identifiers survive to
+reject stale creation: deleted command IDs return `gone` even for changed content,
+and their content fingerprints are erased. Homelab migration and rollback checks
+remain pending; implementation and verification here are local.
 
 ## Commands
 

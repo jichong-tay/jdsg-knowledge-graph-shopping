@@ -386,3 +386,18 @@ Primary implementation references:
 [Ollama 0.30.10 Chat request and debug fields](https://github.com/ollama/ollama/blob/v0.30.10/api/types.go),
 [Qwen35 renderer](https://github.com/ollama/ollama/blob/v0.30.10/model/renderers/qwen35.go), and
 [Qwen tokenizer metadata](https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/tokenizer.json).
+
+### Saved Conversation migration checkpoint (ticket 16)
+
+Migration `002_conversations.sql` is implemented and tested locally, with no new
+Chat endpoint exposed. Deploy it only through the existing green-main, stop-writers,
+verified-backup and migration path. The new code requires schema 2; the previous
+code requires schema 1, so rollback must restore both the previous code and its
+pre-migration database. Do not simply check out old code against schema 2.
+
+A file-backed local check verifies that a failed additive migration leaves a dirty
+marker, that the verified pre-migration backup restores schema 1 and purchase facts,
+and that the restored database can subsequently migrate to schema 2. This is not
+a completed homelab deployment/rollback drill. No host changes were made for this
+ticket. Startup interruption recovery is supplied as a repository operation and
+will be wired into the application lifecycle with ticket 17.

@@ -82,6 +82,11 @@ jobs:
           uv pip install --python "$SHOPPING_WHEEL_VENV/bin/python" \
             --no-deps "$SHOPPING_WHEEL_DIR"/*.whl
           uv pip check --python "$SHOPPING_WHEEL_VENV/bin/python"
+          "$SHOPPING_WHEEL_VENV/bin/python" -I -c '
+          from importlib.resources import files
+          for name in ("001_ingestion.sql", "002_conversations.sql"):
+              assert files("app").joinpath("migrations", name).is_file(), name
+          '
           chmod -R a-w "$SHOPPING_WHEEL_VENV"
           "$SHOPPING_WHEEL_VENV/bin/shopping" migrate \
             --database "$SHOPPING_WHEEL_STATE_DIR/shopping.sqlite3"
