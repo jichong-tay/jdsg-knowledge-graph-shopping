@@ -321,3 +321,21 @@ verified backup is a clearer starting point.
 - [GitHub secret-scanning scope](https://docs.github.com/en/code-security/reference/secret-security/secret-scanning-scope)
 - [Tailscale Serve command](https://tailscale.com/docs/reference/tailscale-cli/serve)
 - [uv installation](https://docs.astral.sh/uv/getting-started/installation/)
+
+### Chat environment preparation (ticket 15)
+
+The shared `deploy/validate_config.py` validator is now used by bootstrap and the
+installed deployment helper, including recovery. It accepts the original five
+required settings and optional `SHOPPING_OLLAMA_URL`, `SHOPPING_OLLAMA_MODEL`, and
+`SHOPPING_APP_ORIGIN`; it rejects unknown or duplicate keys and never sources the
+file. The endpoint remains `http://127.0.0.1:11434`. Production origins must be HTTPS
+origins without credentials, a path, query, or fragment.
+
+Deploy this preparation with the existing environment first. Confirm the installed
+helper invokes the shared validator and that the validator accepts a temporary
+copy containing the intended optional settings before editing `app.env`. Retain
+this preparation commit as the oldest compatible rollback target once optional
+settings are present. For rollback to an older helper, restore the original
+five-key configuration first; do not leave expanded settings with an incompatible
+helper. Keep the normal backup and `--recover` workflow. Backend deployment and
+actual model acceptance are separate checkpoints.

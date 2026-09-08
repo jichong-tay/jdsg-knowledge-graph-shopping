@@ -73,3 +73,47 @@ def test_deployment_backup_rejects_unmigrated_or_dirty_database(
 
     with pytest.raises(RuntimeError, match=r"migrated|dirty"):
         create_verified_backup(source, backup)
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+def test_deployment_environment_accepts_old_and_chat_config(tmp_path, expanded):
+    import subprocess
+
+    config = Path("deploy/shopping.env.example").read_text()
+    if expanded:
+        config += (
+            "\nSHOPPING_OLLAMA_URL=http://127.0.0.1:11434\n"
+            "SHOPPING_OLLAMA_MODEL=qwen3.5:9b\n"
+            "SHOPPING_APP_ORIGIN=https://shopping.example.invalid\n"
+        )
+    path = tmp_path / "app.env"
+    path.write_text(config)
+    result = subprocess.run(
+        ["python3", "deploy/validate_config.py", str(path)], capture_output=True
+    )
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "SHOPPING_PORT=9000",
+        "SHOPPING_PORT=8000",
+        "SHOPPING_UNKNOWN=x",
+        "SHOPPING_DATABASE_PATH=/tmp/other.sqlite3",
+        "SHOPPING_OLLAMA_URL=https://remote.invalid",
+        "SHOPPING_OLLAMA_MODEL=$(touch /tmp/not-executed)",
+        "SHOPPING_APP_ORIGIN=https://user:password@host.invalid",
+        "EVIL=1",
+    ],
+)
+def test_deployment_environment_rejects_unsafe_or_duplicate_keys(tmp_path, extra):
+    import subprocess
+
+    path = tmp_path / "app.env"
+    path.write_text(Path("deploy/shopping.env.example").read_text() + "\n" + extra + "\n")
+    result = subprocess.run(
+        ["python3", "deploy/validate_config.py", str(path)], capture_output=True
+    )
+    assert result.returncode == 1
+    assert extra.encode() not in result.stderr

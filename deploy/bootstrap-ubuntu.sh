@@ -56,17 +56,7 @@ run_as_admin() {
 }
 
 validate_production_config() {
-  local config="$CONFIG_DIR/app.env"
-  [[ $(grep -Ec '^[[:space:]]*SHOPPING_' "$config") -eq 5 ]] || return 1
-  grep -qxF 'SHOPPING_ENV=production' "$config" || return 1
-  grep -qxF 'SHOPPING_DATA_DIR=/var/lib/shopping-app' "$config" || return 1 # pragma: allowlist secret
-  grep -qxF 'SHOPPING_HOST=127.0.0.1' "$config" || return 1
-  grep -qxF 'SHOPPING_PORT=8000' "$config" || return 1
-  grep -qxF 'SHOPPING_ALLOW_NON_LOOPBACK=false' "$config" || return 1
-  if grep -Eq '^SHOPPING_(DATABASE_PATH|RAW_EMAIL_DIR)=' "$config"; then
-    echo "The first deployment helper supports the standard production paths only." >&2
-    return 1
-  fi
+  python3 "$APP_DIR/deploy/validate_config.py" "$CONFIG_DIR/app.env"
 }
 
 wait_until_ready() {

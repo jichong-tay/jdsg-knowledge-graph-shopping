@@ -241,3 +241,7 @@ repository concerns, and the `sudo deploy-shopping --recover` recovery command.
 The complete schema, prediction design, chatbot/tool boundary, Graphify experiment,
 notifications, milestones, and acceptance tests are in
 [docs/MVP_PLAN.md](docs/MVP_PLAN.md).
+
+The deployment helper now validates optional local Chat settings alongside the
+original production environment. Deploy this preparation before adding settings;
+see [Chat environment preparation](docs/DEPLOYMENT.md#chat-environment-preparation-ticket-15).
