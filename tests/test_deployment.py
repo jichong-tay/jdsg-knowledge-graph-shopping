@@ -103,7 +103,7 @@ def test_deployment_environment_accepts_old_and_chat_config(tmp_path, expanded):
         "SHOPPING_DATABASE_PATH=/tmp/other.sqlite3",
         "SHOPPING_OLLAMA_URL=https://remote.invalid",
         "SHOPPING_OLLAMA_MODEL=$(touch /tmp/not-executed)",
-        "SHOPPING_APP_ORIGIN=https://user:password@host.invalid",
+        "SHOPPING_APP_ORIGIN=https://user:password@host.invalid",  # pragma: allowlist secret
         "EVIL=1",
     ],
 )
