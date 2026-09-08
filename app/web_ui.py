@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime
 from typing import Any
+from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from fasthtml.common import (
     A,
@@ -21,7 +24,13 @@ from fasthtml.common import (
     P,
     Script,
     Span,
+    Table,
+    Tbody,
+    Td,
+    Th,
+    Thead,
     Title,
+    Tr,
 )
 from stitchyard.assets import StitchyardAssets
 from stitchyard.ui import Icon, IconButton, StatusBadge
@@ -185,3 +194,67 @@ def money(cents: int | None, currency: str) -> str:
 
 def compact_list(items: Iterable[str]) -> str:
     return " · ".join(item for item in items if item)
+
+
+def product_history(result: dict[str, Any]):
+    """Inspect the same bounded current purchase facts supplied to read tools."""
+    data = result["data"]
+    rows = []
+    for item in data["items"]:
+        purchase_date = item["purchase_date"]
+        date_label = (
+            datetime.fromisoformat(purchase_date)
+            .astimezone(ZoneInfo("Asia/Singapore"))
+            .strftime("%d %b %Y")
+            if purchase_date
+            else "Unavailable"
+        )
+        rows.append(
+            Tr(
+                Td(A(item["external_order_id"], href=f"/orders/{item['order_id']}")),
+                Td(item["raw_name"]),
+                Td(date_label),
+                Td(status_badge(item["status"])),
+                Td(f"{item['quantity']:g} {item['unit']}"),
+                Td(money(item["unit_price_cents"], item["currency"])),
+                Td(money(item["net_cents"], item["currency"])),
+            )
+        )
+    next_url = (
+        f"/products/{data['product_id']}?{urlencode({'cursor': result['next_cursor']})}"
+        if result["next_cursor"]
+        else None
+    )
+    return Div(
+        Div(
+            Table(
+                Thead(
+                    Tr(
+                        *(
+                            Th(label)
+                            for label in (
+                                "Order",
+                                "Recorded item",
+                                "Purchase date",
+                                "Status",
+                                "Quantity",
+                                "Unit price",
+                                "Net amount",
+                            )
+                        )
+                    )
+                ),
+                Tbody(*rows),
+                cls="data-table",
+            ),
+            cls="table-scroll",
+        )
+        if rows
+        else P("No current purchases recorded."),
+        Div(
+            A("← First page", href=f"/products/{data['product_id']}"),
+            Span("More purchases available" if next_url else "End of purchase history"),
+            A("Next →", href=next_url) if next_url else None,
+            cls="pagination",
+        ),
+    )

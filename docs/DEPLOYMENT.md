@@ -38,8 +38,51 @@ they change, how private data is protected, and where to look when something fai
 Tailscale's first HTTPS-consent step and choosing a commit whose CI passed remain
 deliberate human actions.
 
-Nothing has been run on the Ubuntu machine yet. The scripts and CI workflow must be
-committed, pushed, and observed green before following this runbook.
+The operator now reports a working homelab deployment pipeline and Tailscale access
+to the hosted application. The chatbot MVP will reuse that installation and access
+path; it does not require repeating the bootstrap or Tailscale setup below. This
+report does not independently verify every repository bootstrap/rollback procedure.
+
+The operator-run [read-only inventory](../.scratch/shopping-assistant/issues/13-check-homelab-ollama-readiness.md)
+reports Ubuntu 24.04.4 LTS, a responding RTX 3060 12 GB/NVIDIA driver, Ollama 0.30.10
+already installed, and active Ollama/shopping services. The `shopping-app` account
+successfully listed models through `http://127.0.0.1:11434`, and the observed model
+listener is loopback-only. Reuse the existing installation; model fit, tool calling,
+effective service settings, and eventual in-service application access still need
+validation. Browsers continue using the existing Tailscale application URL, not the
+model API. No Ollama setup or deployment change was performed during planning.
+
+The accepted Chat operations plan reuses these independent services and loads the
+selected model on demand with a five-minute keep-alive. Assistant availability will
+be reported separately from core app/schema readiness so an Ollama outage alone
+does not trigger app/database rollback. A successful bounded synthetic model/tool
+check is still required for the first chatbot rollout. Ollama and model updates
+are **manual only**: no updater timer, automatic downloads, or upgrade step in app
+startup/deployment. These are planned behaviors, not installed changes; see
+[ticket 12](../.scratch/shopping-assistant/issues/12-define-provider-operations.md).
+
+### Incremental Chat rollout — planned
+
+The operator wants frequent deployments to this experimental homelab, not a single
+release after all Chat work is finished. Deploy coherent working increments after
+the existing green-main CI/checks, including useful checkpoints within a ticket.
+Brief restarts are acceptable; keep verified SQLite backup, migration, private
+access and database-aware rollback. The host still uses `SHOPPING_ENV=production`;
+experimental use does not turn off its runtime or data safeguards.
+
+The [implementation sequence](../.scratch/shopping-assistant/implementation-plan.md)
+is purchase history tools, Qwen backend, saved Conversations, Chat UI/recovery, then
+final host verification. Early backend/schema increments can deploy without a Chat
+navigation item. The last ticket verifies accumulated deployments rather than
+blocking all earlier releases.
+
+Before adding Chat environment keys in ticket 15, first deploy the backwards-
+compatible helper/bootstrap-validator preparation with the original environment.
+The existing helper checks exactly five keys before checkout; merely changing app
+code cannot make that installed helper accept new settings. Verify the successfully
+installed helper and compatible rollback/recovery behavior, then add settings and
+deploy the backend. Record the actual origin locally; never use a wildcard to avoid
+configuration. No helper or host changes have been performed by this planning work.
 
 ## Accounts and directories
 

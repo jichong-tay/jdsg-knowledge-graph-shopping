@@ -52,6 +52,7 @@ from stitchyard.ui import (
     UiButton,
 )
 
+from app.assistant.tools import dispatch_tool
 from app.config import Settings
 from app.db.migrations import assert_schema_current, current_schema_version
 from app.db.repository import (
@@ -67,7 +68,7 @@ from app.web_queries import (
     overview_snapshot,
     system_snapshot,
 )
-from app.web_ui import document, main_view, money, register_assets, status_badge
+from app.web_ui import document, main_view, money, product_history, register_assets, status_badge
 
 _STATIC_DIR = Path(__file__).with_name("static")
 _DISPLAY_TIMEZONE = ZoneInfo("Asia/Singapore")
@@ -928,6 +929,36 @@ def create_app(settings: Settings):
             eyebrow="Orders",
             current_path=f"/orders/{order_id}",
             content=content,
+        )
+
+    @app.get("/products/{product_id}")  # pyright: ignore[reportAttributeAccessIssue]
+    def product_detail(request: Request, product_id: int, cursor: str = ""):
+        arguments: dict = {"product_id": product_id}
+        if cursor or "cursor" in request.query_params:
+            arguments["cursor"] = cursor
+        result = dispatch_tool(settings, "get_product_history", arguments)
+        if result["status"] == "not_found":
+            raise HTTPException(status_code=404, detail="Product not found")
+        if result["status"] == "error":
+            invalid = result["data"]["code"] in {"invalid_arguments", "invalid_cursor"}
+            raise HTTPException(
+                status_code=400 if invalid else 503,
+                detail="Invalid purchase history request"
+                if invalid
+                else "Purchase history unavailable",
+            )
+        name = result["data"]["canonical_name"]
+        return _page_response(
+            request,
+            settings,
+            title=name,
+            eyebrow="Purchase history",
+            current_path=f"/products/{product_id}",
+            content=PageFrame(
+                P(A("← Orders", href="/orders", cls="back-link")),
+                PageHeader(name, "Current recorded purchases", eyebrow="Product"),
+                Panel(product_history(result)),
+            ),
         )
 
     @app.get("/system")  # pyright: ignore[reportAttributeAccessIssue]

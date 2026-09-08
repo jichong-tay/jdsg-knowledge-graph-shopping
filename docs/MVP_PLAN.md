@@ -7,7 +7,11 @@ Initial data source: one frequently used online grocery retailer
 
 ## 1. MVP outcome
 
-The MVP should reliably turn supported retailer transaction emails into a private shopping history, answer questions about that history through a local chatbot, calculate replenishment predictions for repeat-consumable items, display graph relationships, and send a daily Telegram alert when an item is likely due. Durable purchases remain searchable without generating inappropriate replenishment alerts.
+The immediate MVP is an Ollama-only Shopping Assistant on the existing homelab deployment: open the dedicated Chat page through Tailscale, ask about receipt items and purchase history, and receive answers supported by four application-owned SQLite read tools. Use the agreed durable conversation, streaming, Stop, retry, and reconnect behavior, with a small Python agent loop. The tools are `search_products`, `get_product_history`, `list_recent_orders`, and `get_order`; they include all current receipt items, and the extracted delivery date is used as Purchase date by operator convention.
+
+The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [implementation plan](../.scratch/shopping-assistant/implementation-plan.md) and tickets 14–18 define the queued work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Application implementation has not started under this plan.
+
+The broader roadmap below also describes replenishment predictions, graph relationships, shopping-list writes, and Telegram alerts. Those features are later work and are not prerequisites for the immediate chatbot MVP. Durable purchases remain searchable without generating inappropriate replenishment alerts.
 
 The LLM is not the database and is not the forecasting engine. SQLite is authoritative; Python calculates predictions; the LLM selects tools and explains their results.
 
@@ -36,9 +40,9 @@ flowchart TB
 | Runtime | Python 3.14 managed by `uv` | Matches the repository configuration and keeps setup reproducible. |
 | Environments | `development` on the MacBook and in isolated automated checks; `production` on Ubuntu | Two profiles match the actual workflow without a separate staging or test configuration. |
 | Model server | Ollama | Separate, local model process with streaming and tool calling. |
-| Main model | `gemma4:12b-it-q4_K_M` | The 7.6 GB quantization fits the 12 GB RTX 3060 and has native function calling and system-prompt support. |
-| Comparison model | `qwen3.5:9b-q4_K_M` | A smaller 6.6 GB fallback and useful A/B benchmark for tool accuracy and speed. |
-| Model context | 8,192 tokens initially | Enough for the tool schemas and short chat history without forcing CPU spill. |
+| Main model | `qwen3.5:9b`, thinking disabled | Operator-selected installed model; validate actual tool behavior and GPU fit during integration. |
+| Model comparison | Not required before implementation | Revisit selection only after a concrete compatibility, correctness, memory, or latency problem. |
+| Model context | 8,192 tokens initially | Starting evaluation target, including output/headroom; validate full GPU residency and try 4,096 if needed. |
 | Database | SQLite, using WAL only on a patched runtime | Simple, inspectable, local, and appropriate for fewer than five users with brief writes. |
 | Database access | Python `sqlite3` plus versioned SQL migrations | Keeps the schema and SQL visible while learning; no ORM is required. |
 | Validation | Pydantic v2 | Strict boundaries for parser, tool, and API inputs/outputs. |
@@ -78,7 +82,7 @@ Operating rules for reliable concurrency:
 4. Parse email and generate LLM output outside a transaction, then perform the final database changes in one short transaction.
 5. Run one Uvicorn application worker initially. Its async server can handle the small number of browser/WebSocket users; synchronous repository work is dispatched without blocking the event loop.
 6. Keep scheduled recomputation transactions bounded. Large calculations read into memory first and persist results in a short transaction.
-7. Treat `database is locked` after the configured wait as an observable error and retry a bounded number of times rather than hiding it.
+7. Treat `database is locked` after the configured wait as an observable error. The Shopping Assistant does not automatically replay a failed operation; preserve the incomplete attempt and offer explicit Retry. The bounded SQLite busy wait is not an application retry.
 8. Create each `sqlite3` connection inside the thread that uses it; never pass a default connection between request/worker threads.
 9. Back up a live database with Python's SQLite backup API, never by copying only `shopping.sqlite3` while WAL mode is active.
 
@@ -101,10 +105,21 @@ Do not add LangChain, LlamaIndex, a vector database, Redis, Celery, Neo4j, or Do
 
 ### Ollama runtime settings
 
-Start with one loaded model and one request at a time:
+The accepted [operations plan](../.scratch/shopping-assistant/issues/12-define-provider-operations.md)
+selects the actually installed `qwen3.5:9b` with thinking disabled as the MVP default.
+No Gemma comparison or repeated model benchmark is required before implementation.
+Reuse Ollama 0.30.10 initially; do not download or upgrade automatically. Load the
+model on demand with five-minute keep-alive; keep core app health independent of
+assistant availability and validate actual model/tool behavior before rollout.
+
+Start with one loaded model and one request at a time. The model below is the
+operator's selected default, not a measured GPU-fit or accuracy guarantee.
+The accepted runtime limits are recorded in section 6; actual inference still
+requires a small integration check during implementation acceptance.
 
 ```text
-model: gemma4:12b-it-q4_K_M
+model: qwen3.5:9b
+think: false
 num_ctx: 8192
 num_predict: 768
 temperature for tool routing: 0.1
@@ -113,9 +128,9 @@ OLLAMA_NUM_PARALLEL: 1
 OLLAMA_MAX_LOADED_MODELS: 1
 ```
 
-Use `ollama ps` during acceptance testing. The target is `100% GPU`. If 8K context causes offload or instability, reduce it to 4K before changing the model. If response speed is still unacceptable, benchmark `qwen3.5:9b-q4_K_M` and then `gemma4:e4b`. Do not use Gemma 4 26B/31B or a Q8 build: they leave too little or no room for context and runtime overhead on a 12 GB card.
+Use `ollama ps` during acceptance testing. The target is `100% GPU`. If 8K context causes offload or instability, try the accepted 4K setting before changing the model. Investigate concrete failures before considering an alternative; do not automatically switch models, download replacements, or enlarge the accepted budgets.
 
-Gemma 4 12B is the primary recommendation because this application depends heavily on structured tool calls and controlled system instructions. Qwen 3.5 9B remains installed only during a short evaluation, not loaded concurrently. Run both against the same acceptance-question set and retain Gemma unless it is materially slower or less reliable on the actual machine.
+The operator selected Qwen3.5 9B after reviewing the [local model research](../.scratch/shopping-assistant/local-model-selection-research.md), prioritizing progress over further model comparisons. Existing other models can remain installed but are not loaded for an MVP comparison. Published benchmarks are supporting evidence, not proof of this application's behavior on the host.
 
 Use deterministic parsing before the LLM. The model should only resolve ambiguous product identity/category mappings and turn tool results into natural language.
 
@@ -714,9 +729,88 @@ This is deliberately a transparent statistical baseline. Quantity-aware depletio
 
 ## 6. Chatbot design
 
-Build a small explicit agent loop using the Ollama Python client. Do not let the model execute SQL or arbitrary Python.
+### Immediate read-only MVP — accepted design, not implemented
 
-Initial read tools:
+Use the accepted [runtime contract](../.scratch/shopping-assistant/issues/06-define-agent-runtime.md):
+one application-owned Python loop and one small Ollama adapter. The adapter reports
+text deltas, complete correlated tool proposals, provider end/failure, and optional
+usage; the loop owns tool execution, budgets, context, evidence, and completion.
+Do not let the model execute SQL or arbitrary Python.
+
+The four tools are `search_products`, `get_product_history`, `list_recent_orders`,
+and `get_order`. No write, analytics, or graph tools are part of this MVP.
+
+| Runtime boundary | Accepted initial setting |
+|---|---|
+| Active response attempts | One application-wide; show busy and preserve the competing draft, no queue |
+| Attempt work deadline | 180 seconds, including model loading |
+| Model/tool limits | 4 model requests and 8 proposed tool calls per attempt, including corrections, invalid proposals, repeated calls, and pagination |
+| Model output | 768 generated tokens maximum per request |
+| Context budget | 8,192 total: 6,912 input + 768 output + 512 safety headroom |
+| Reduced-context evaluation | 4,096 total: 2,816 input + 768 output + 512 safety headroom |
+| Submitted message | 4,000 characters maximum; reject oversized input without silently shortening it |
+| Tool result | 4 KiB encoded UTF-8 envelope including evidence/pagination, also subject to row-count ceilings |
+| Invalid tool batch | One corrective model request within the same budgets |
+| Stop/deadline cleanup | Up to 5 seconds of local cleanup, not extra generation time |
+
+These are provisional settings for the recorded i5-3570K, 16 GB RAM, RTX 3060 12 GB
+host. Measure actual model fit, available VRAM, and latency before deployment.
+
+Validate whole tool batches strictly before executing any call, execute sequentially,
+and reuse identical canonical calls within an attempt while still charging their
+call budget. A new attempt uses fresh reads. Return smaller complete pages when
+needed to meet the byte cap; never cut JSON or fact values. If one record cannot
+fit, return a bounded size-limit error. Byte/row limits do not replace whole-input
+token accounting.
+
+Count instructions, schemas, template overhead, complete exchanges, and tool results
+within the input budget using model-aware accounting verified for the selected
+model. Drop oldest complete exchanges first; never silently truncate the current
+question or split tool groups. Do not use generated summaries or include failed
+assistant text, orphaned results, other conversations, or raw email/archive/credential
+context. Fail clearly if required content cannot fit.
+
+Receipt-fact answers require fresh evidence from the current attempt. Generate local
+evidence links in the application. Clean provider completion, no pending tools, and
+valid required evidence references are necessary for completion, but cannot prove
+every sentence is correct; the fixed evaluation set must test semantic grounding.
+Cut-off output, exhausted limits, and invalid references remain incomplete.
+
+No automatic model/database replay or hidden final-answer repair is allowed. Preserve
+partial output and offer explicit Retry under the accepted lifecycle. Browser
+disconnect does not cancel; explicit Stop/deadline closes the model stream, stops
+new work, and rejects late output. Do not release the application slot while local
+work can still append or schedule. Failed cleanup leaves generation unavailable
+with a recoverable fault, without automatically restarting Ollama or killing host
+processes. Closing a stream is best-effort provider cancellation, not proof that
+GPU computation ended. Keep short same-thread SQLite operations outside model waits.
+
+Reuse the existing FastHTML/Stitchyard shell and approved prototype A: visible
+conversation history on desktop, a Conversations control on mobile, and receipt
+details on demand. The accepted [streaming contract](../.scratch/shopping-assistant/issues/07-define-streaming-protocol.md)
+uses deduplicated commands, saved-before-broadcast text batches around 250 ms,
+versioned snapshot recovery, and explicit Stop/deletion state transitions. A slow
+tab cannot block generation; reconnect backs off for about two minutes before
+manual recovery. Browser disconnect does not rerun or cancel the question.
+
+Keep the application private through the existing Tailscale Serve path, with no
+public endpoint, Funnel, or port forwarding. Add origin/session/CSRF protections
+within the existing app, not a separate user-account service. Render escaped text
+and application-owned evidence links; operational logs exclude conversation content.
+
+The operator is learning Python and systems thinking: use small ordinary functions,
+explicit state transitions, one active async response task, and existing library
+facilities. Do not turn these safety rules into a generic messaging/RPC framework,
+broker, distributed coordinator, or token event-replay store. Ticket 09 will define
+short vertical slices and a compact acceptance checklist. Implementation remains
+paused until Wayfinder planning is complete.
+
+### Later roadmap — not immediate MVP scope
+
+The broader tools, write policy, and screens below are retained for future work.
+They do not expand the accepted four-tool runtime above.
+
+Future read tools:
 
 ```text
 search_products(query)
@@ -729,7 +823,7 @@ get_graph_neighbors(node_id, predicates=None, depth=1)
 get_open_shopping_list()
 ```
 
-Initial write tools:
+Future write tools:
 
 ```text
 add_shopping_item(product_id=None, free_text=None, quantity=1, unit='item')
@@ -749,15 +843,15 @@ Write-tool policy:
 Execution and security rules:
 
 - Use Ollama's async client and a process-wide semaphore of one, matching `OLLAMA_NUM_PARALLEL=1`.
-- Enforce a turn timeout, cancellation on disconnect when safe, and a bounded `num_predict`; never let an abandoned generation occupy the model indefinitely.
+- Preserve the accepted work deadline and explicit Stop behavior; browser disconnect does not cancel generation.
 - Create SQLite connections inside the executing worker thread and offload synchronous repository operations so the WebSocket event loop remains responsive.
 - Persist user messages before generation and persist tool/audit outcomes atomically. A reconnect resumes from durable conversation state rather than replaying a write.
-- Bound every tool result and retain only a bounded recent history plus a separately generated summary. Do not paste entire order histories into the model.
+- Bound every tool result and retain only bounded complete recent exchanges. Do not generate conversation summaries or paste entire order histories into the model.
 - Preserve Gemma's thinking context only within the active tool-call sequence and strip prior-turn thinking before later independent turns.
 - Validate WebSocket `Origin`, protect HTTP writes against CSRF, and restrict Tailscale grants to the intended user/devices.
 - Treat email text, product names, graph content, and tool results as untrusted data. Test prompt injection and never allow them to redefine the system/tool policy.
 
-The UI has five screens:
+The later roadmap envisions five screens:
 
 1. **Dashboard** — due items, ingestion health, latest order, and open list.
 2. **Chat** — streamed conversation with visible tool activity.
@@ -960,13 +1054,13 @@ Exit: every displayed prediction can show its purchase dates, calculation, confi
 
 ### Milestone 5 — Local chatbot
 
-- Run `gemma4:12b-it-q4_K_M` in Ollama with 8K context.
-- Benchmark `qwen3.5:9b-q4_K_M` against the same 30–50-case tool-calling acceptance set before fixing the final model choice.
+- Run the selected installed `qwen3.5:9b` in Ollama with thinking disabled and 8K context.
+- Check the selected model with the small synthetic acceptance set in ticket 09; no prerequisite model comparison or 30–50-case benchmark.
 - Implement the explicit tool loop and read-only tools first.
 - Add WebSocket token streaming and persist chat/tool history.
 - Add shopping-list write tools with confirmation.
 
-Exit: the selected model meets the agreed tool-selection/schema-validity threshold across 30–50 cases, stays within latency and token limits, handles timeout/reconnect safely, and does not invent database facts. GPU loading is measured but is not the sole acceptance criterion.
+Exit: the selected model passes ticket 09's small factual/tool/evidence acceptance checklist, stays within latency and token limits, handles timeout/reconnect safely, and does not invent database facts in those checks. GPU loading is measured but is not the sole acceptance criterion.
 
 Acceptance questions:
 

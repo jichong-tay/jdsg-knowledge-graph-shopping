@@ -280,3 +280,56 @@ def test_order_page_uses_current_revision_listing_name(
     assert "Example Oat Drink 1L" not in response.text
     assert "Other fees: SGD 0.40" in response.text
     assert "Included tax: SGD 1.24" in response.text
+
+
+def test_product_evidence_page_is_paginated_and_links_to_orders(purchase_facts):
+    from urllib.parse import parse_qs, urlparse
+
+    from bs4 import BeautifulSoup
+
+    app = create_app(purchase_facts)
+    with app.get_testclient() as client:
+        response = client.get("/products/1")
+        assert response.status_code == 200
+        assert "Purchase date" in response.text
+        assert "12 Jan 2026" in response.text
+        soup = BeautifulSoup(response.text, "html.parser")
+        next_link = soup.find("a", string="Next →")
+        assert next_link is not None
+        url = str(next_link.get("href"))
+        assert parse_qs(urlparse(url).query)["cursor"]
+        assert client.get(url).status_code == 200
+        for link in soup.select('a[href^="/orders/"]'):
+            assert client.get(str(link.get("href"))).status_code == 200
+        assert client.get("/products/999").status_code == 404
+        assert client.get("/products/1?cursor=bad").status_code == 400
+        assert client.get("/products/0").status_code == 400
+
+
+def test_product_evidence_escapes_names_and_displays_singapore_date(purchase_facts):
+    from app.db.connection import connect_database
+
+    connection = connect_database(purchase_facts.database_path)
+    try:
+        connection.execute(
+            "UPDATE products SET canonical_name = ? WHERE id = 1",
+            ('<img src="https://evil.invalid/x" onerror="alert(1)">',),
+        )
+    finally:
+        connection.close()
+    app = create_app(purchase_facts)
+    with app.get_testclient() as client:
+        url = "/products/1"
+        texts = []
+        from bs4 import BeautifulSoup
+
+        while url:
+            response = client.get(url)
+            assert response.status_code == 200
+            assert "&lt;img" in response.text
+            assert '<img src="https://evil.invalid' not in response.text
+            texts.append(response.text)
+            link = BeautifulSoup(response.text, "html.parser").find("a", string="Next →")
+            url = str(link.get("href")) if link else ""
+        assert "11 Jan 2026" in "".join(texts)  # 10 Jan 18:00 UTC is 11 Jan in Singapore.
+        assert "Unavailable" in "".join(texts)

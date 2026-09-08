@@ -27,8 +27,19 @@ untracked.
 
 Gmail ingestion, analytics and replenishment predictions, Graphify projection,
 Ollama/Gemma chat, Telegram alerts, and off-machine private-data backups are planned
-but not implemented. The deployment scripts are included but have not yet been run
-on the Ubuntu host.
+but not implemented. The operator reports that the homelab deployment pipeline and
+Tailscale access to the hosted page are already working. The repository's specific
+bootstrap/rollback procedures have not been independently verified in this session.
+
+The immediate MVP is an Ollama-backed Chat page on that existing deployment, with
+four read-only purchase history tools and saved conversations. The selected MVP model is the
+already installed `qwen3.5:9b`, with thinking disabled. Actual model/tool operation
+still needs an integration check, not a prerequisite model comparison; cloud
+providers and agent-framework comparisons are deferred.
+Wayfinder planning is complete; the five [implementation tasks](.scratch/shopping-assistant/implementation-plan.md)
+are queued, starting with purchase history tools and evidence. Deploy working,
+checked increments frequently to the experimental homelab rather than waiting for
+the whole Chat feature. Chat implementation and deployment have not yet occurred.
 
 ## Architecture
 
@@ -41,8 +52,7 @@ flowchart TD
     S --> W["FastHTML purchase-history UI"]
     S -. planned .-> P["Analytics and predictions"]
     S -. planned .-> G["Rebuildable graph projection"]
-    P -. planned .-> C["Local Gemma chatbot"]
-    G -. planned .-> C
+    S -. planned MVP .-> C["Ollama Shopping Assistant"]
     P -. planned .-> T["Telegram alerts"]
 ~~~
 
@@ -88,6 +98,34 @@ ordinary links and forms remain valid without JavaScript. The shell follows the
 system light/dark preference initially and remembers a local manual override. All
 browser assets are served locally; the UI does not load fonts, scripts, or styles
 from public CDNs.
+
+## Purchase history read tools
+
+`app.assistant.tools` now exposes `tool_schemas()`, strict `validate_arguments()`,
+and `dispatch_tool(settings, name, arguments)` for `search_products`,
+`get_product_history`, `list_recent_orders`, and `get_order`. These functions are
+ready for the later model adapter; Chat and model execution remain planned.
+
+Tools read each order's current revision, including `placed` records. Purchase date
+uses only recorded `delivery_at`, with missing dates last; dated rows sort newest
+first, breaking order ties by descending order ID and item ties by line number.
+The product evidence page at `/products/{product_id}` displays calendar dates in
+Asia/Singapore and links to existing order pages. Search returns candidates without
+selecting an identity on the caller's behalf.
+
+Results contain `status`, `data`, `evidence`, `next_cursor`, and `truncated`.
+Search defaults/max are 10/20 rows, product history 20/50, recent orders 10/25;
+order items use 50 rows per page. The complete `encode_result()` UTF-8 envelope is
+also capped at 4 KiB, so pages may contain fewer whole rows. Oversized individual
+records return `size_limit`; no fields or strings are silently shortened. Recorded
+order totals stay distinct from item pages; the tools do not compute history totals.
+
+Pass `next_cursor` with the same tool and arguments to continue. Signed cursors are
+bound to the database, query/ID, and limit, and expire on application restart.
+Pagination reads live state; restart from the first page if purchases change during
+browsing. Unknown IDs return `not_found`, valid empty reads return `ok`, and invalid
+arguments/cursors or storage failures return safe error codes. No archives or email
+internals are returned, and no shopping data or schema changes are made.
 
 ## Commands
 
