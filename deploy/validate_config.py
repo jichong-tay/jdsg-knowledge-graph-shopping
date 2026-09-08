@@ -63,6 +63,6 @@ def validate_config(path: Path) -> None:
 if __name__ == "__main__":
     try:
         validate_config(Path(sys.argv[1]))
-    except ValueError, OSError, IndexError:
+    except (ValueError, OSError, IndexError):
         print("Unsupported production configuration", file=sys.stderr)
         sys.exit(1)

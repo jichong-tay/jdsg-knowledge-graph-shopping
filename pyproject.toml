@@ -56,3 +56,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "RUF", "UP"]
+
+[tool.ruff.per-file-target-version]
+"deploy/validate_config.py" = "py312"

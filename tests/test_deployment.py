@@ -117,3 +117,9 @@ def test_deployment_environment_rejects_unsafe_or_duplicate_keys(tmp_path, extra
     )
     assert result.returncode == 1
     assert extra.encode() not in result.stderr
+
+
+def test_validator_parses_with_ubuntu_system_python_grammar():
+    import ast
+
+    ast.parse(Path("deploy/validate_config.py").read_text(), feature_version=(3, 12))
