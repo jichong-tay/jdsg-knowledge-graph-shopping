@@ -78,7 +78,7 @@ def test_application_shell_links_only_to_live_pages(settings) -> None:
     assert 'href="/"' in response.text
     assert 'href="/orders"' in response.text
     assert 'href="/system"' in response.text
-    assert "Chat" not in response.text
+    assert 'href="/chat"' in response.text
     assert "Graph" not in response.text
 
 

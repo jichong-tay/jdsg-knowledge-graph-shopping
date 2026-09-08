@@ -52,7 +52,9 @@ from stitchyard.ui import (
     UiButton,
 )
 
+from app.assistant.runtime import run_attempt
 from app.assistant.tools import dispatch_tool
+from app.assistant.web import register_chat
 from app.config import Settings
 from app.db.migrations import assert_schema_current, current_schema_version
 from app.db.repository import (
@@ -693,7 +695,7 @@ def _order_drawer(order: dict, revisions: list[dict]):
     )
 
 
-def create_app(settings: Settings):
+def create_app(settings: Settings, *, chat_runner=run_attempt):
     runtime = assert_supported_runtime(enforce_safe_sqlite=settings.enforce_safe_sqlite)
     assert_schema_current(settings.database_path, settings.migrations_dir)
     session_key_path = settings.data_dir / ".sesskey"
@@ -703,6 +705,8 @@ def create_app(settings: Settings):
         pico=False,
         surreal=False,
         htmx=False,
+        same_site="strict",
+        sess_https_only=settings.environment == "production",
     )
     os.chmod(session_key_path, 0o600)
     app.state.settings = settings
@@ -715,6 +719,7 @@ def create_app(settings: Settings):
         ),
     )
     register_assets(app)
+    register_chat(app, settings, runner=chat_runner)
 
     @app.get("/")  # pyright: ignore[reportAttributeAccessIssue]
     def dashboard(request: Request):

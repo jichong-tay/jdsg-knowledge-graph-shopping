@@ -26,7 +26,7 @@ committed fixtures are irreversibly sanitised structural examples using reserved
 untracked.
 
 Gmail ingestion, analytics and replenishment predictions, Graphify projection,
-Ollama/Gemma chat, Telegram alerts, and off-machine private-data backups are planned
+Telegram alerts and off-machine private-data backups are planned
 but not implemented. The operator reports that the homelab deployment pipeline and
 Tailscale access to the hosted page are already working. The repository's specific
 bootstrap/rollback procedures have not been independently verified in this session.
@@ -37,9 +37,9 @@ already installed `qwen3.5:9b`, with thinking disabled. Actual model/tool operat
 still needs an integration check, not a prerequisite model comparison; cloud
 providers and agent-framework comparisons are deferred.
 Wayfinder planning is complete; the five [implementation tasks](.scratch/shopping-assistant/implementation-plan.md)
-are underway: purchase-history tools, the local Qwen backend, and conversation persistence are implemented. Deploy working,
+are underway: purchase-history tools, the local Qwen backend, conversation persistence, and the protected Chat UI are implemented locally. Deploy working,
 checked increments frequently to the experimental homelab rather than waiting for
-the whole Chat feature. The browser Chat page and backend deployment remain pending.
+the whole Chat feature. Homelab deployment and verification of the protected Chat page remain pending.
 
 ## Architecture
 
@@ -104,7 +104,7 @@ from public CDNs.
 `app.assistant.tools` now exposes `tool_schemas()`, strict `validate_arguments()`,
 and `dispatch_tool(settings, name, arguments)` for `search_products`,
 `get_product_history`, `list_recent_orders`, and `get_order`. These functions are
-used by the local Qwen backend; the browser Chat page remains planned.
+used by the local Qwen backend and Chat page.
 
 Tools read each order's current revision, including `placed` records. Purchase date
 uses only recorded `delivery_at`, with missing dates last; dated rows sort newest
@@ -133,7 +133,7 @@ internals are returned, and no shopping data or schema changes are made.
 returns a complete, incomplete, or rejected result. Optional asynchronous callbacks
 receive provisional text, correlated tool activity/results, and a terminal event.
 `availability()` reports only the local response slot; it never loads a model.
-There is no Chat route or model-management command yet.
+The Chat page uses this loop; there is no model-management command.
 
 The backend uses installed `qwen3.5:9b`, `think: false`, 8,192 context tokens, 768
 output tokens, and a five-minute keep-alive. It allows one active attempt, at most
@@ -159,7 +159,7 @@ endpoint/model identity; changed identity is rejected.
 
 Optional settings are `SHOPPING_OLLAMA_URL` (fixed loopback URL),
 `SHOPPING_OLLAMA_MODEL` (default `qwen3.5:9b`), and `SHOPPING_APP_ORIGIN`.
-Missing origin disables future browser Chat access while Orders remains usable.
+Missing origin disables browser Chat access while Orders remains usable.
 An Ollama outage does not alter core `/api/health` readiness.
 
 The default test suite skips real inference. To run the explicit synthetic check
@@ -173,12 +173,46 @@ The local loop passed a synthetic tool round trip against the homelab model thro
 an SSH relay. Backend deployment and verification inside the effective systemd
 service context remain pending; see the deployment guide for the checkpoint record.
 
+## Using Chat
+
+Set `SHOPPING_APP_ORIGIN=http://127.0.0.1:8000` for local development, matching
+exactly the address you open, then run the existing migrate/start commands. Open
+**Chat** in the navigation. Production requires the exact HTTPS Tailscale origin.
+The installed local Ollama service and selected model must be available to answer;
+saved conversations and Orders remain readable during an inference outage.
+
+Send a question, expand purchase-history activity, and open an evidence link to
+inspect the recorded order or product. One response runs globally. Stop preserves
+an incomplete answer; Retry explicitly starts a new attempt. Rename and delete
+are available from the conversation header. Deletion waits for active cleanup.
+The history rail becomes a Conversations dialog on small screens.
+
+Committed text updates stream approximately every 250 ms. Disconnecting a tab
+leaves generation running; reconnect retrieves saved state and checks an uncertain
+command's status without resending it. Restart marks unfinished attempts interrupted.
+Drafts, selection, and one pending command are kept in the tab's session storage,
+so reload preserves unsent text. Closing the tab ends that browser storage lifetime.
+
+`/chat` and `/chat/token` validate the configured host. `/chat/ws` additionally
+requires an exact Origin and a session-bound page token in its first message.
+Cookies are HttpOnly/SameSite Strict and Secure in production. Optional
+`SHOPPING_CHAT_TOKEN_SECONDS` is 43,200 by default (allowed range 1–86,400);
+expired connections require renewed access. Tokens never enter URLs. Connections,
+commands, frames, outgoing queues, and snapshot pages are bounded; a slow tab is
+disconnected independently. Assistant faults are separate from `/api/health`.
+
+Local browser verification uses synthetic purchases and the actual runtime with a
+fake provider. `tests/browser/chat_draft_recovery.js` can be run with
+`agent-browser eval --stdin` on a running Chat page to verify reload before the
+first update, including a lost acknowledgement, without issuing real mutations.
+Real Qwen verification of this protected UI on the homelab remains pending.
+
 ## Saved conversations
 
 Migration `002_conversations.sql` adds saved Conversations, immutable submitted
 messages, Response Attempts, bounded tool records, and command deduplication.
 Run `shopping migrate` before using this code with an existing database; startup
-only verifies the schema. There is no browser Chat mutation route yet.
+only verifies the schema. Chat mutations use the protected WebSocket route.
 
 `app.assistant.conversations` uses short-lived SQLite connections and functions:
 

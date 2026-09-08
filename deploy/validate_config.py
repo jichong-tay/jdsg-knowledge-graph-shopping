@@ -20,6 +20,7 @@ _OPTIONAL = {
     "SHOPPING_OLLAMA_URL",
     "SHOPPING_OLLAMA_MODEL",
     "SHOPPING_APP_ORIGIN",
+    "SHOPPING_CHAT_TOKEN_SECONDS",
     "PYTHONDONTWRITEBYTECODE",
 }
 
@@ -43,6 +44,8 @@ def validate_config(path: Path) -> None:
         r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", values.get("SHOPPING_OLLAMA_MODEL", "qwen3.5:9b")
     ):
         raise ValueError("Invalid model name")
+    if not 1 <= int(values.get("SHOPPING_CHAT_TOKEN_SECONDS", "43200")) <= 86400:
+        raise ValueError("Invalid Chat token lifetime")
     if "SHOPPING_APP_ORIGIN" in values:
         origin = values["SHOPPING_APP_ORIGIN"]
         parsed = urlsplit(origin)

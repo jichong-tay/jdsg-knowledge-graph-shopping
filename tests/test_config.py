@@ -188,3 +188,11 @@ def test_chat_configuration_from_environment(monkeypatch, tmp_path):
     ]:
         with pytest.raises(ValueError, match="origin"):
             replace(settings, app_origin=origin)
+
+
+@pytest.mark.parametrize("seconds", [0, 86401, True])
+def test_chat_token_lifetime_is_bounded(settings, seconds):
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="token lifetime"):
+        replace(settings, chat_token_seconds=seconds)

@@ -2,7 +2,7 @@
 
 Parent: ../map.md
 Type: task
-Status: open
+Status: claimed
 Blocked by: 16
 
 ## Goal and contracts
@@ -38,30 +38,30 @@ snapshot and pending command status, never replays generation.
 
 ## Implementation steps and checks
 
-- [ ] Wire startup recovery before admission and orderly bounded shutdown. Admit
+- [x] Wire startup recovery before admission and orderly bounded shutdown. Admit
   one attempt globally; busy preserves the draft. Fix the snapshot/subscription
   handoff so a concurrent checkpoint cannot be missed.
-- [ ] Implement production HTTPS-origin/host allowlisting and explicit development
+- [x] Implement production HTTPS-origin/host allowlisting and explicit development
   loopback origins, secure HttpOnly/SameSite session cookie, session-bound page token,
   initial-message authentication, and live expiry. Reject missing/null/unlisted
   Origin; do not trust arbitrary forwarded hosts. Tokens stay out of URLs/logs.
   HTTP mutations, if any, get equivalent same-origin/CSRF protection; GET is read-only.
-- [ ] Define only ticket 07's commands and validate their bounded envelopes. Test
+- [x] Define only ticket 07's commands and validate their bounded envelopes. Test
   expired/uninitialized sockets, oversize/malformed frames, floods, stale targets,
   deduplication, rejected conflicting IDs, and unauthorized snapshot access.
-- [ ] Consume runtime updates, checkpoint approximately every 250 ms, flush terminal
+- [x] Consume runtime updates, checkpoint approximately every 250 ms, flush terminal
   state immediately, and broadcast only after commit. Test persistence failure,
   slow subscribers, socket/queue limits, version gaps, disconnect continuation,
   and reconciliation without duplicate generation. Never hold a DB transaction over
   socket writes or stop the global attempt because one subscriber is slow.
-- [ ] Connect Stop/Retry/delete to exact saved state. Test both orderings of races,
+- [x] Connect Stop/Retry/delete to exact saved state. Test both orderings of races,
   Stopping display during cleanup, delete failure, stale tabs, no resurrection,
   all-tab rename/deletion updates, and explicit Retry after server restart.
-- [ ] Rebuild A's desktop history rail/mobile Conversations control, composer,
+- [x] Rebuild A's desktop history rail/mobile Conversations control, composer,
   local title/rename, history pagination, pending/incomplete/error states, and
   on-demand evidence details in the existing shell. No mock responses, variant
   switcher, cloud picker, reasoning trace, or raw model HTML. Preserve typed drafts.
-- [ ] Implement bounded reconnect/backoff/heartbeat from ticket 07, manual recovery
+- [x] Implement bounded reconnect/backoff/heartbeat from ticket 07, manual recovery
   after exhaustion, offline pause, page-token refresh, and honest stale/error state.
   Do not automatically resend mutations, even when their acknowledgement was lost.
 - [ ] Test escaped user/model/tool text, only application-owned evidence links, no
@@ -83,3 +83,36 @@ uv run --locked pytest -q tests/test_chat_web.py tests/test_chat_streaming.py te
 The private Tailscale Chat page is usable with Qwen, saved Conversations, Stop/Retry,
 reconnect and evidence. Record actual checks separately from untested behavior.
 Ticket 18 verifies the full host/service/recovery flow, not deferred command security.
+
+## Local implementation
+
+Continuing locally by operator request. Ticket 16 provides the saved-state
+operations; host deployment remains pending. Tests use the specified HTTP/WebSocket
+and saved-state boundaries, with synthetic data and fake-provider integration.
+
+
+## Implementation result — 8 September 2026
+
+Implemented locally with functions in `app/assistant/web.py` and existing runtime,
+conversation repository, shell, theme, and evidence destinations. No new runtime
+classes, dependencies, frontend build system, or migrations were introduced.
+The page protects admission, streams committed updates, coordinates one response,
+and reconciles uncertain commands without replay. Review fixes cover shutdown
+admission, browser Back restoration, and newer drafts before the first saved update.
+
+Validation: 272 tests passed, one opt-in real-model test skipped. Ruff formatting,
+lint, Pyright, secret scanning, and both code-review axes passed. The wheel installs
+with locked production dependencies, includes migrations 001/002 and Chat assets,
+and runs `shopping migrate` to schema 2 outside the checkout; dependency checks pass.
+
+Browser checks used synthetic purchases and the actual runtime with a fake provider:
+send → tool → evidence answer → drawer → reload, desktop/mobile, light/dark,
+keyboard dialog dismissal, escaped titles, draft preservation, and Back reconnect.
+`tests/browser/chat_draft_recovery.js` also passes both received/lost acknowledgement
+cases before the first update, preserving newer drafts without replaying mutations.
+Transport tests cover slow subscribers, token expiry, conflicting commands,
+multi-tab changes, persistence failure, and shutdown/restart recovery.
+
+Status remains claimed because local implementation was requested. No homelab
+changes were made; deployment and real Qwen checks through the protected Tailscale
+page remain pending, including service-context outage and rollback verification.

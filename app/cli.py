@@ -103,6 +103,13 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "serve":
         host = settings.validate_bind_host(arguments.host)
         port = arguments.port or settings.port
-        uvicorn.run(create_app(settings), host=host, port=port, workers=1)
+        uvicorn.run(
+            create_app(settings),
+            host=host,
+            port=port,
+            workers=1,
+            ws_max_size=65536,
+            ws_max_queue=16,
+        )
         return 0
     raise AssertionError(f"unhandled command: {arguments.command}")

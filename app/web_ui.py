@@ -40,6 +40,7 @@ _ASSETS = StitchyardAssets()
 _NAV_ITEMS = (
     ("/", "Overview", "layout-dashboard"),
     ("/orders", "Orders", "shopping-basket"),
+    ("/chat", "Chat", "messages-square"),
     ("/system", "System", "activity"),
 )
 
@@ -66,7 +67,7 @@ def _nav_link(path: str, label: str, icon: str, *, current_path: str) -> Any:
         href=path,
         cls=f"nav-link{' is-active' if active else ''}",
         aria_current="page" if active else None,
-        hx_get=path,
+        hx_get=None if path == "/chat" or current_path == "/chat" else path,
         hx_target="#main-view",
         hx_swap="outerHTML",
         hx_push_url="true",
@@ -166,6 +167,7 @@ def document(
             Div(id="app-live-region", cls="sr-only", aria_live="polite", aria_atomic="true"),
             *_ASSETS.footers(),
             Script(src="/static/shopping.js"),
+            Script(src="/static/chat.js", defer=True) if current_path == "/chat" else None,
         ),
         lang="en",
     )

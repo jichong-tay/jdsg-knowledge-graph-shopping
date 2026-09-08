@@ -389,8 +389,8 @@ Primary implementation references:
 
 ### Saved Conversation migration checkpoint (ticket 16)
 
-Migration `002_conversations.sql` is implemented and tested locally, with no new
-Chat endpoint exposed. Deploy it only through the existing green-main, stop-writers,
+Migration `002_conversations.sql` is implemented and tested locally, without a new
+Chat endpoint at that checkpoint. Deploy it only through the existing green-main, stop-writers,
 verified-backup and migration path. The new code requires schema 2; the previous
 code requires schema 1, so rollback must restore both the previous code and its
 pre-migration database. Do not simply check out old code against schema 2.
@@ -399,5 +399,32 @@ A file-backed local check verifies that a failed additive migration leaves a dir
 marker, that the verified pre-migration backup restores schema 1 and purchase facts,
 and that the restored database can subsequently migrate to schema 2. This is not
 a completed homelab deployment/rollback drill. No host changes were made for this
-ticket. Startup interruption recovery is supplied as a repository operation and
-will be wired into the application lifecycle with ticket 17.
+ticket. Ticket 17 now wires startup interruption recovery into the application lifecycle.
+
+
+### Protected Chat UI checkpoint (ticket 17)
+
+The HTTP page, authenticated WebSocket, durable streaming, Stop/Retry, deletion,
+and reconnect are implemented and verified locally. No homelab files or services
+were changed. Continue using the existing green-main deployment, verified backup,
+migration, health check, and rollback process; schema remains at version 2.
+
+Configure `SHOPPING_APP_ORIGIN` as the exact HTTPS origin used through Tailscale
+Serve. Preserve the original Host and Origin through the proxy; arbitrary forwarded
+host headers are ignored. Production session cookies require HTTPS and WebSockets
+use WSS. Keep the application and Ollama bound to loopback and use one worker.
+Missing origin disables Chat while leaving Orders usable. Model unavailability is
+reported in the response, separately from core `/api/health` readiness.
+
+The optional `SHOPPING_CHAT_TOKEN_SECONDS` defaults to 43,200 and accepts 1–86,400.
+The default needs no new environment entry. If customizing it, first deploy this
+revision's compatible validation helper: the earlier ticket 15 preparation helper
+does not accept this key. Then edit the protected environment file and restart via
+the normal deployment process. Expired browser access requires reconnect/refresh;
+tokens are sent in the initial WebSocket message, never URLs or logs.
+
+Local checks cover synthetic send/tool/evidence/reload, desktop/mobile themes and
+keyboard dialogs, draft recovery after lost acknowledgements, multi-tab updates,
+slow readers, checkpoint failure, and shutdown/restart. The protected page still
+needs a real Qwen round trip through the deployed Tailscale origin and a disposable
+host rollback/recovery drill. These are pending checks, not evidence of deployment.

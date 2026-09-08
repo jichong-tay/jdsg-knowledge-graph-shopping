@@ -64,6 +64,11 @@
     previousFocus = null;
   }
 
+  function requestCloseDrawer() {
+    if (document.getElementById("shopping-chat") || history.length <= 1) closeDrawer();
+    else history.back();
+  }
+
   function openDrawer(drawer) {
     previousFocus = document.activeElement;
     document.body.classList.add("drawer-open");
@@ -83,16 +88,14 @@
     if (theme) setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     if (drawerClose) {
       event.preventDefault();
-      if (history.length > 1) history.back();
-      else closeDrawer();
+      requestCloseDrawer();
     }
   });
 
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape") {
       if (document.querySelector("[data-drawer]")) {
-        if (history.length > 1) history.back();
-        else closeDrawer();
+        requestCloseDrawer();
       } else setSidebar(false);
       return;
     }

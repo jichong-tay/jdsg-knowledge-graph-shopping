@@ -66,9 +66,12 @@ class Settings:
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3.5:9b"
     app_origin: str | None = None
+    chat_token_seconds: int = 12 * 60 * 60
 
     def __post_init__(self) -> None:
         _validate_environment(self.environment)
+        if type(self.chat_token_seconds) is not int or not 1 <= self.chat_token_seconds <= 86400:
+            raise ValueError("Chat token lifetime must be 1-86400 seconds")
         if self.ollama_url != "http://127.0.0.1:11434":
             raise ValueError("Ollama endpoint must be http://127.0.0.1:11434")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", self.ollama_model):
@@ -169,6 +172,7 @@ def load_settings() -> Settings:
         ollama_url=os.environ.get("SHOPPING_OLLAMA_URL", "http://127.0.0.1:11434"),
         ollama_model=os.environ.get("SHOPPING_OLLAMA_MODEL", "qwen3.5:9b"),
         app_origin=os.environ.get("SHOPPING_APP_ORIGIN"),
+        chat_token_seconds=int(os.environ.get("SHOPPING_CHAT_TOKEN_SECONDS", "43200")),
         host=os.environ.get("SHOPPING_HOST", "127.0.0.1"),
         port=int(os.environ.get("SHOPPING_PORT", "8000")),
         allow_non_loopback=os.environ.get("SHOPPING_ALLOW_NON_LOOPBACK", "false").casefold()
