@@ -37,9 +37,9 @@ already installed `qwen3.5:9b`, with thinking disabled. Actual model/tool operat
 still needs an integration check, not a prerequisite model comparison; cloud
 providers and agent-framework comparisons are deferred.
 Wayfinder planning is complete; the five [implementation tasks](.scratch/shopping-assistant/implementation-plan.md)
-are queued, starting with purchase history tools and evidence. Deploy working,
+are underway: purchase-history tools and the local Qwen backend are implemented. Deploy working,
 checked increments frequently to the experimental homelab rather than waiting for
-the whole Chat feature. Chat implementation and deployment have not yet occurred.
+the whole Chat feature. The browser Chat page and backend deployment remain pending.
 
 ## Architecture
 
@@ -104,7 +104,7 @@ from public CDNs.
 `app.assistant.tools` now exposes `tool_schemas()`, strict `validate_arguments()`,
 and `dispatch_tool(settings, name, arguments)` for `search_products`,
 `get_product_history`, `list_recent_orders`, and `get_order`. These functions are
-ready for the later model adapter; Chat and model execution remain planned.
+used by the local Qwen backend; the browser Chat page remains planned.
 
 Tools read each order's current revision, including `placed` records. Purchase date
 uses only recorded `delivery_at`, with missing dates last; dated rows sort newest
@@ -126,6 +126,52 @@ Pagination reads live state; restart from the first page if purchases change dur
 browsing. Unknown IDs return `not_found`, valid empty reads return `ok`, and invalid
 arguments/cursors or storage failures return safe error codes. No archives or email
 internals are returned, and no shopping data or schema changes are made.
+
+## Local Qwen backend
+
+`app.assistant.runtime.run_attempt()` now runs the native Ollama tool loop and
+returns a complete, incomplete, or rejected result. Optional asynchronous callbacks
+receive provisional text, correlated tool activity/results, and a terminal event.
+`availability()` reports only the local response slot; it never loads a model.
+There is no Chat route, conversation persistence, or model-management command yet.
+
+The backend uses installed `qwen3.5:9b`, `think: false`, 8,192 context tokens, 768
+output tokens, and a five-minute keep-alive. It allows one active attempt, at most
+four generation requests/eight proposed tool calls, one invalid-batch correction,
+180 seconds of work, and five seconds for cleanup. Tool calls run sequentially;
+identical canonical calls reuse results only within the current attempt. Stop and
+limits leave partial output incomplete. Unsettled cleanup faults generation until
+process restart. No operational retries or silent model fallback occur.
+
+Context accounting supports verified Ollama 0.30.10 and the Qwen35 GGUF tokenizer.
+It reconstructs BPE from the installed model's vocabulary/merges and counts Ollama's
+actual render-only prompt, including instructions, schemas and tool groups. It
+reserves 768 output tokens and 512 safety tokens, allowing at most 6,912 input tokens.
+Only whole old completed exchanges are removed. Unsupported accounting and provider
+count mismatches fail visibly. No tokenizer/model downloads occur at runtime.
+
+Factual answers require fresh tool evidence markers such as `[[order:1]]`, checked
+against application-owned references. Clarifications and unsupported-request
+explanations use explicit modes without a needless tool call. These mechanical
+checks cannot prove the truth of every sentence; text and tool data remain untrusted.
+The caller supplies completed exchanges from one conversation and its saved
+endpoint/model identity; changed identity is rejected.
+
+Optional settings are `SHOPPING_OLLAMA_URL` (fixed loopback URL),
+`SHOPPING_OLLAMA_MODEL` (default `qwen3.5:9b`), and `SHOPPING_APP_ORIGIN`.
+Missing origin disables future browser Chat access while Orders remains usable.
+An Ollama outage does not alter core `/api/health` readiness.
+
+The default test suite skips real inference. To run the explicit synthetic check
+against the installed local endpoint, using only a temporary development database:
+
+```bash
+SHOPPING_OLLAMA_SMOKE=1 uv run --locked pytest -q -s tests/integration/test_ollama_smoke.py
+```
+
+The local loop passed a synthetic tool round trip against the homelab model through
+an SSH relay. Backend deployment and verification inside the effective systemd
+service context remain pending; see the deployment guide for the checkpoint record.
 
 ## Commands
 

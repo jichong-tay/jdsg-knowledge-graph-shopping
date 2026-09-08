@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import stat
 from dataclasses import dataclass, replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _ENVIRONMENTS = frozenset({"development", "production"})
 
@@ -61,9 +63,40 @@ class Settings:
     port: int = 8000
     allow_non_loopback: bool = False
     allow_synthetic_fixtures: bool = False
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen3.5:9b"
+    app_origin: str | None = None
 
     def __post_init__(self) -> None:
         _validate_environment(self.environment)
+        if self.ollama_url != "http://127.0.0.1:11434":
+            raise ValueError("Ollama endpoint must be http://127.0.0.1:11434")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", self.ollama_model):
+            raise ValueError("Invalid Ollama model name")
+        if self.app_origin is not None:
+            parsed = urlsplit(self.app_origin)
+            local = parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+            if (
+                not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+                or any(c.isspace() for c in self.app_origin)
+                or not 1 <= (parsed.port or 443) <= 65535
+                or (
+                    parsed.scheme != "https"
+                    and not (
+                        self.environment == "development" and local and parsed.scheme == "http"
+                    )
+                )
+            ):
+                raise ValueError("Invalid application origin")
+
+    @property
+    def chat_enabled(self) -> bool:
+        return self.app_origin is not None
 
     @property
     def enforce_safe_sqlite(self) -> bool:
@@ -133,6 +166,9 @@ def load_settings() -> Settings:
         database_path=database_path,
         raw_email_dir=raw_email_dir,
         migrations_dir=root / "app" / "migrations",
+        ollama_url=os.environ.get("SHOPPING_OLLAMA_URL", "http://127.0.0.1:11434"),
+        ollama_model=os.environ.get("SHOPPING_OLLAMA_MODEL", "qwen3.5:9b"),
+        app_origin=os.environ.get("SHOPPING_APP_ORIGIN"),
         host=os.environ.get("SHOPPING_HOST", "127.0.0.1"),
         port=int(os.environ.get("SHOPPING_PORT", "8000")),
         allow_non_loopback=os.environ.get("SHOPPING_ALLOW_NON_LOOPBACK", "false").casefold()

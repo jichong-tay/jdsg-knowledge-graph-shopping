@@ -9,7 +9,7 @@ Initial data source: one frequently used online grocery retailer
 
 The immediate MVP is an Ollama-only Shopping Assistant on the existing homelab deployment: open the dedicated Chat page through Tailscale, ask about receipt items and purchase history, and receive answers supported by four application-owned SQLite read tools. Use the agreed durable conversation, streaming, Stop, retry, and reconnect behavior, with a small Python agent loop. The tools are `search_products`, `get_product_history`, `list_recent_orders`, and `get_order`; they include all current receipt items, and the extracted delivery date is used as Purchase date by operator convention.
 
-The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [implementation plan](../.scratch/shopping-assistant/implementation-plan.md) and tickets 14–18 define the queued work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Application implementation has not started under this plan.
+The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [implementation plan](../.scratch/shopping-assistant/implementation-plan.md) and tickets 14–18 define the queued work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Tickets 14 and 15 now have local implementations: bounded purchase-history tools, product evidence pages, and the native Qwen backend. A synthetic local-loop/homelab-model check passed; deployment, saved Conversations and browser Chat remain pending.
 
 The broader roadmap below also describes replenishment predictions, graph relationships, shopping-list writes, and Telegram alerts. Those features are later work and are not prerequisites for the immediate chatbot MVP. Durable purchases remain searchable without generating inappropriate replenishment alerts.
 
@@ -104,6 +104,13 @@ The fewer-than-five-user assumption means trusted browser/device sessions sharin
 Do not add LangChain, LlamaIndex, a vector database, Redis, Celery, Neo4j, or Docker to the MVP. Each can be evaluated later against a demonstrated need.
 
 ### Ollama runtime settings
+
+Ticket 15 implements the native asynchronous adapter, single-slot Python loop and
+whole-exchange context budget locally. Ollama 0.30.10 render-only prompts plus the
+installed Qwen35 BPE metadata provide exact model-aware input counts; unknown
+versions and count mismatches fail closed. No inference is performed by core health.
+The helper preparation must precede expanded host configuration. See the deployment
+guide for measured synthetic acceptance and remaining service-context checks.
 
 The accepted [operations plan](../.scratch/shopping-assistant/issues/12-define-provider-operations.md)
 selects the actually installed `qwen3.5:9b` with thinking disabled as the MVP default.

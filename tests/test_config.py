@@ -149,3 +149,42 @@ def test_gmail_private_paths_are_derived_from_data_directory(
 
     assert value.gmail_dir.is_dir()
     assert stat.S_IMODE(value.gmail_dir.stat().st_mode) == 0o700
+
+
+def test_chat_defaults_keep_core_app_usable(settings):
+    assert settings.ollama_url == "http://127.0.0.1:11434"
+    assert settings.ollama_model == "qwen3.5:9b"
+    assert settings.app_origin is None
+    assert settings.chat_enabled is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://remote.invalid",
+        "http://127.0.0.1:11434/x",
+        "http://user:pass@127.0.0.1:11434",  # pragma: allowlist secret
+        "http://0.0.0.0:11434",
+    ],
+)
+def test_model_endpoint_is_explicit_loopback(settings, url):
+    with pytest.raises(ValueError, match="Ollama"):
+        replace(settings, ollama_url=url)
+
+
+def test_chat_configuration_from_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHOPPING_ENV", "development")
+    monkeypatch.setenv("SHOPPING_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SHOPPING_APP_ORIGIN", "http://127.0.0.1:8000")
+    monkeypatch.setenv("SHOPPING_OLLAMA_MODEL", "qwen3.5:9b")
+    settings = load_settings()
+    assert settings.chat_enabled
+    assert settings.app_origin == "http://127.0.0.1:8000"
+    for origin in [
+        "https://user:secret@host.invalid",  # pragma: allowlist secret
+        "https://host.invalid/path",
+        "https://host.invalid?x=1",
+        "http://remote.invalid",
+    ]:
+        with pytest.raises(ValueError, match="origin"):
+            replace(settings, app_origin=origin)

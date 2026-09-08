@@ -2,7 +2,7 @@
 
 Parent: ../map.md
 Type: task
-Status: open
+Status: claimed
 Blocked by: 14
 
 ## Goal and contracts
@@ -87,3 +87,28 @@ The model backend can answer the synthetic question without a browser; existing
 Orders remain independent of Ollama. No separate comparison phase: investigate a
 concrete failure if the selected model cannot complete the basic loop. Next: ticket
 16 adds durable records; ticket 17 wires them into the live response lifecycle.
+
+## Implementation checkpoint — 8 September 2026
+
+Local backend implemented and reviewed. Preparation commits: `446a48c`, corrected
+for Ubuntu's system Python in `58df2b3`, followed by reviewed secret-scan fixes
+in `55b9b7a`. Use `55b9b7a` as the preparation target after green-main CI.
+The adapter, exact tokenizer/rendered-input accounting, bounded loop, configuration,
+and opt-in synthetic test are implemented. Real local-loop/remote-Qwen tool answers
+passed with matching token counts and current evidence; measurements and limitations
+are recorded in `docs/DEPLOYMENT.md`.
+
+The operator requested continuing implementation locally. Host deployment and
+checks inside the effective shopping service context remain pending; administrator
+SSH worked but sudo requires the operator's password. No host application/config
+or shopping data was changed. Keep this ticket claimed until its deployment and
+service-context acceptance steps are completed; do not treat the browser Chat MVP
+as complete.
+
+Final local verification: 227 tests passed, one explicit real-model test skipped
+by default, formatting/lint/types clean, and the isolated built wheel imports the
+backend, includes migration 001, and runs `shopping migrate`. The separate live
+synthetic probe completed twice with exact local/provider token-count parity.
+Standards and Spec reviews are clear after regression-tested fixes. All new secret
+scan findings were reviewed: fixture credentials are synthetic, and the 37 unchanged
+skill hashes are integrity metadata; the normal scan now passes without exclusions.

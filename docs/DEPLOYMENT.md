@@ -339,3 +339,50 @@ settings are present. For rollback to an older helper, restore the original
 five-key configuration first; do not leave expanded settings with an incompatible
 helper. Keep the normal backup and `--recover` workflow. Backend deployment and
 actual model acceptance are separate checkpoints.
+
+### Qwen backend checkpoint — 8 September 2026
+
+Use preparation commit `55b9b7a` (which includes `446a48c` and `58df2b3`) as the
+compatible preparation target, after green-main CI. It also records reviewed
+skill integrity hashes and the synthetic URL fixture so the normal secret scan passes. Do not deploy `446a48c` alone: the next
+commit fixes the validator's Ubuntu system-Python syntax and adds a regression
+check. The current local implementation is not yet deployed. Keep the host's
+existing environment unchanged until preparation is deployed and validated.
+
+A local Python loop with an isolated synthetic SQLite database was exercised
+against the homelab's existing Ollama API through a temporary SSH relay. No host
+application code, configuration, purchase data, or service was changed. Account
+access worked, but passwordless sudo was unavailable; no privileged deployment or
+service-context check was performed. The relay adds latency and buffers transport
+output; separate fake-transport tests cover streaming fragmentation and cancellation.
+
+- Server: Ollama 0.30.10; model: `qwen3.5:9b`, Q4_K_M.
+- Model digest: `6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`. <!-- pragma: allowlist secret -->
+- Thinking disabled, 8,192 context, 768 output, five-minute keep-alive.
+- Cold first probe: 38.58 seconds, correct tool data but missing evidence marker;
+  correctly marked incomplete. No automatic repair request was made.
+- After stronger evidence instructions, fresh warm attempts completed in 7.25 and
+  5.42 seconds, each with one read tool and two generation requests.
+- Local/provider input counts matched exactly: 951 before the tool and 1,388 after.
+- Ollama reported context 8,192 and `size_vram == size == 5,880,141,577` bytes,
+  indicating full GPU placement for this check.
+
+This verifies the selected model and current local backend on synthetic data, not
+production readiness, cold performance of the final prompt, or full Chat behavior.
+After the backend is deployed, repeat the opt-in test in the service's effective
+context, verify boot/restart options and cancellation, and record the deployed SHA.
+Do not change or restart Ollama automatically, install/update models, or seed the
+production database. Core health remains independent of model availability.
+
+Token accounting deliberately gates Ollama versions: 0.30.10's source-verified
+`_debug_render_only` Chat option supplies the full prompt; the GGUF BPE tokenizer
+counts it before generation. The public API has no assumed tokenize endpoint.
+Render-only accounting requests do not generate tokens and are distinct from the
+four generation-request limit; all network work still consumes the attempt deadline.
+Before manually upgrading Ollama or replacing the model, revalidate this path and
+provider count parity. The application fails closed for an unsupported version.
+
+Primary implementation references:
+[Ollama 0.30.10 Chat request and debug fields](https://github.com/ollama/ollama/blob/v0.30.10/api/types.go),
+[Qwen35 renderer](https://github.com/ollama/ollama/blob/v0.30.10/model/renderers/qwen35.go), and
+[Qwen tokenizer metadata](https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/tokenizer.json).

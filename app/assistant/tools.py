@@ -164,21 +164,29 @@ def _envelope(
     }
 
 
+def prepare_call(
+    settings: Settings, name: str, arguments: Mapping[str, Any]
+) -> tuple[dict[str, Any], str, int]:
+    """Validate a whole proposal, including its cursor, without opening storage."""
+    clean = validate_arguments(name, arguments)
+    scope_values = {key: value for key, value in clean.items() if key != "cursor"}
+    scope = hashlib.sha256(
+        encode_result(
+            {
+                "database": str(settings.database_path.resolve()),
+                "tool": name,
+                "arguments": scope_values,
+            }
+        ).encode()
+    ).hexdigest()
+    offset = _offset(clean["cursor"], scope) if "cursor" in clean else 0
+    return clean, scope, offset
+
+
 def dispatch_tool(settings: Settings, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
     """Return bounded facts or stable errors, without exposing storage internals."""
     try:
-        clean = validate_arguments(name, arguments)
-        scope_values = {key: value for key, value in clean.items() if key != "cursor"}
-        scope = hashlib.sha256(
-            encode_result(
-                {
-                    "database": str(settings.database_path.resolve()),
-                    "tool": name,
-                    "arguments": scope_values,
-                }
-            ).encode()
-        ).hexdigest()
-        offset = _offset(clean["cursor"], scope) if "cursor" in clean else 0
+        clean, scope, offset = prepare_call(settings, name, arguments)
     except ValueError as error:
         return _envelope("error", {"code": str(error)})
     try:
