@@ -186,6 +186,9 @@ inspect the recorded order or product. One response runs globally. Stop preserve
 an incomplete answer; Retry explicitly starts a new attempt. Rename and delete
 are available from the conversation header. Deletion waits for active cleanup.
 The history rail becomes a Conversations dialog on small screens.
+Chat fills the viewport below the application header, keeping the composer at the
+bottom without scrolling the outer page. Message history and the conversation list
+scroll independently; the input's resize limit adapts to short screens.
 
 Committed text updates stream approximately every 250 ms. Disconnecting a tab
 leaves generation running; reconnect retrieves saved state and checks an uncertain
@@ -206,6 +209,9 @@ fake provider. `tests/browser/chat_draft_recovery.js` can be run with
 `agent-browser eval --stdin` on a running Chat page to verify reload before the
 first update, including a lost acknowledgement, without issuing real mutations.
 Real Qwen verification of this protected UI on the homelab remains pending.
+`tests/browser/chat_viewport.js` runs with the same browser command and checks the
+actual page and styles at desktop, phone, and landscape sizes, including long
+histories and an expanded composer, without sending chat commands.
 
 ## Saved conversations
 
@@ -332,6 +338,21 @@ Supported production versions are SQLite 3.51.3+, 3.50.7+, or 3.44.6 within that
 backport line.
 
 ## Checks
+
+Ruff targets Python 3.14 by default. `pyproject.toml` makes one exception:
+
+~~~toml
+[tool.ruff.per-file-target-version]
+"deploy/validate_config.py" = "py312"
+~~~
+
+This tells Ruff to use Python 3.12 as the target for linting and formatting that
+file, keeping version-dependent fixes and formatting compatible with the deployment
+host's system Python. Both Ubuntu deployment scripts invoke the validator with
+`python3`, independently of the application's uv-managed Python 3.14 environment.
+The override does not install or select a Python interpreter, or change the
+application's Python requirement. See Ruff's
+[per-file target version documentation](https://docs.astral.sh/ruff/settings/#per-file-target-version).
 
 ~~~bash
 uv lock --check
