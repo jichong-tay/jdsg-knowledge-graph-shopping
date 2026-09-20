@@ -6,6 +6,38 @@ application boundary is shopping: future adapters can support other online or
 in-store retailers without changing the archive, database, web UI, or analytics
 layers.
 
+Current focus: the implemented shopping knowledge graph and protected Graph UI,
+with item purchase frequency and future purchase predictions as the first intended
+use. The operator has chosen delivery date as
+Purchase Date for that analysis; current records contain scheduled delivery slots.
+The [accepted model](.scratch/shopping-assistant/specs/shopping-knowledge-graph-model.md)
+includes Product Family above exact Products: group the same product type across
+brands/sizes and review suggested memberships before use. Recorded-purchase
+eligibility and counting by order/distinct delivery day are also accepted.
+[Ticket 21](.scratch/shopping-assistant/issues/21-build-product-family-foundation.md)
+is implemented locally and browser verified with synthetic data and the actual development database. It includes the
+required interactive Graph page in the existing app: search and explore connected
+families/products, inspect purchase timelines and evidence, and review proposed
+family memberships. Its historical implementation plan records the SQLite review
+history and original renderer decisions, superseded by the [Cytoscape redesign](.scratch/shopping-assistant/plans/graph-ui-redesign.md).
+Family persistence/review, graph projection, and the protected Graph UI are
+implemented locally. Predictions remain planned.
+SQLite remains authoritative, and graph artifacts will be derived and rebuildable.
+
+Product circle size now reflects the number of qualifying distinct Orders in the
+selected period. Click a Product once to reveal its past Orders, labeled by
+Singapore scheduled delivery date. Selecting an Order retains that Product's
+connections and opens its details/evidence link; **All products** returns to the
+overview. Larger circles and counts do not depend on the number of visible nodes.
+Repeated lines in one Order count once. The record-version filter controls earlier
+revisions, not whether older logical Orders are included. See
+[ticket 23](.scratch/shopping-assistant/issues/23-make-graph-show-purchase-frequency-and-orders.md).
+
+Migration 003 adds authoritative Product Family definitions and append-only
+membership proposals/reviews. The protected `/graph` page renders a locally bundled Cytoscape projection with current/history relationships and delivery timelines. Configure
+`SHOPPING_APP_ORIGIN` to the exact browser origin. No memberships are assigned
+automatically; forecasts and new Chat tools remain planned.
+
 ## Implemented first slice
 
 - Python 3.14 project managed by uv 0.12.3
@@ -27,20 +59,33 @@ untracked.
 
 Gmail authorization, client, provenance, and sync code live in the ingestion
 package. Automatic scheduled Gmail ingestion, analytics and replenishment
-predictions, Graphify projection, Telegram alerts and off-machine private-data
+predictions, external Graphify export, Telegram alerts and off-machine private-data
 backups remain planned or operator-configured capabilities. The operator reports that the homelab deployment pipeline and
 Tailscale access to the hosted page are already working. The repository's specific
 bootstrap/rollback procedures have not been independently verified in this session.
 
-The immediate MVP is an Ollama-backed Chat page on that existing deployment, with
-four read-only purchase history tools and saved conversations. The selected MVP model is the
-already installed `qwen3.5:9b`, with thinking disabled. Actual model/tool operation
-still needs an integration check, not a prerequisite model comparison; cloud
+The local Chat implementation has five read-only purchase history tools and saved
+conversations, including a bounded monthly-item listing by Singapore delivery date.
+The selected MVP model is the
+already installed `qwen3.5:9b`, with thinking disabled. Synthetic model/tool checks
+run through the opt-in integration suite; cloud
 providers and agent-framework comparisons are deferred.
-Wayfinder planning is complete; the five [implementation tasks](.scratch/shopping-assistant/plans/chat-mvp.md)
-are underway: purchase-history tools, the local Qwen backend, conversation persistence, and the protected Chat UI are implemented locally. Deploy working,
-checked increments frequently to the experimental homelab rather than waiting for
-the whole Chat feature. Homelab deployment and verification of the protected Chat page remain pending.
+The original Wayfinder round is complete. Purchase-history tools, the local Qwen
+backend, conversation persistence, and the protected Chat UI are implemented
+locally. The remaining [implementation-plan checkpoint](.scratch/shopping-assistant/plans/chat-mvp.md)
+is homelab deployment and verification under ticket 18. The local work in tickets
+21–22 did not change the operator's existing hosted application.
+
+The [Chat investigation](.scratch/shopping-assistant/research/chat-investigation-handoff.md)
+records the earlier lifecycle and answer-quality failures. The operator accepted
+the [remediation scope](.scratch/shopping-assistant/issues/19-define-chat-remediation-scope-and-acceptance.md):
+repair global generation faults and Conversation switching first, then ordinary
+replies/fallback behavior and monthly item retrieval.
+[Ticket 22](.scratch/shopping-assistant/issues/22-implement-chat-remediation.md)
+tracks the implementation and verification; ticket 19 remains the accepted decision
+record. Stop now reconciles with durable tool results, malformed empty responses
+fail within their own attempt, and a failed Conversation switch preserves the
+previous selection and subscription.
 
 ## Architecture
 
@@ -52,13 +97,13 @@ flowchart TD
     F --> S[("SQLite source of truth")]
     S --> W["FastHTML purchase-history UI"]
     S -. planned .-> P["Analytics and predictions"]
-    S -. planned .-> G["Rebuildable graph projection"]
+    S --> G["Implemented locally: rebuildable Graph explorer"]
     S --> C["Implemented locally: Ollama Shopping Assistant"]
     P -. planned .-> T["Telegram alerts"]
 ~~~
 
-SQLite is authoritative. Graph and Markdown outputs will be rebuildable projections,
-not a second source of truth.
+SQLite is authoritative. The Graph is a rebuildable projection; planned Markdown
+exports will also be derived from SQLite.
 
 The installed package is `shopping` under `src/`. `shopping.ingestion` owns email
 archive, parsers, Gmail sync, and import persistence; `shopping.purchases` owns
@@ -77,6 +122,15 @@ uv python install 3.14
 uv sync --all-groups
 uv run shopping migrate
 ```
+
+Set `SHOPPING_APP_ORIGIN` to the exact local browser origin, then open `/graph` to
+use the protected Graph page.
+
+Synthetic Graph browser checks use a disposable temporary database. Start
+`uv run python tests/browser/graph_server.py`, open `http://127.0.0.1:8766/graph`,
+and follow [the Graph browser checklist](tests/browser/graph_README.md). The
+checks cover current/history views, selection, review controls, navigation, and
+responsive layouts without using the operator database.
 
 Optionally import the synthetic sample order:
 
@@ -188,7 +242,8 @@ from public CDNs.
 
 `shopping.assistant.tools` now exposes `tool_schemas()`, strict `validate_arguments()`,
 and `dispatch_tool(settings, name, arguments)` for `search_products`,
-`get_product_history`, `list_recent_orders`, and `get_order`. These functions are
+`get_product_history`, `list_recent_orders`, `get_order`, and `list_purchase_items`.
+These functions are
 used by the local Qwen backend and Chat page.
 
 Tools read each order's current revision, including `placed` records. Purchase date
@@ -199,11 +254,18 @@ Asia/Singapore and links to existing order pages. Search returns candidates with
 selecting an identity on the caller's behalf.
 
 Results contain `status`, `data`, `evidence`, `next_cursor`, and `truncated`.
-Search defaults/max are 10/20 rows, product history 20/50, recent orders 10/25;
+Search defaults/max are 10/20 rows, product history 20/50, recent orders 10/25,
+and monthly items 10/20;
 order items use 50 rows per page. The complete `encode_result()` UTF-8 envelope is
 also capped at 4 KiB, so pages may contain fewer whole rows. Oversized individual
 records return `size_limit`; no fields or strings are silently shortened. Recorded
 order totals stay distinct from item pages; the tools do not compute history totals.
+
+`list_purchase_items` requires a `month` in `YYYY-MM` form. It reads current
+individual item lines whose known delivery timestamps fall within that Singapore
+calendar month, including placed and cancelled records. Repeated lines remain
+separate. This differs from the Graph's qualifying purchase-frequency scope.
+Unknown delivery dates cannot be assigned to a month and are excluded explicitly.
 
 Pass `next_cursor` with the same tool and arguments to continue. Signed cursors are
 bound to the database, query/ID, and limit, and expire on application restart.
@@ -220,7 +282,7 @@ receive provisional text, correlated tool activity/results, and a terminal event
 `availability()` reports only the local response slot; it never loads a model.
 The Chat page uses this loop; there is no model-management command.
 
-The backend uses installed `qwen3.5:9b`, `think: false`, 8,192 context tokens, 768
+The backend uses installed `qwen3.5:9b`, `think: false`, temperature 0, 8,192 context tokens, 768
 output tokens, and a five-minute keep-alive. It allows one active attempt, at most
 four generation requests/eight proposed tool calls, one invalid-batch correction,
 180 seconds of work, and five seconds for cleanup. Tool calls run sequentially;
@@ -244,7 +306,7 @@ endpoint/model identity; changed identity is rejected.
 
 Optional settings are `SHOPPING_OLLAMA_URL` (fixed loopback URL),
 `SHOPPING_OLLAMA_MODEL` (default `qwen3.5:9b`), and `SHOPPING_APP_ORIGIN`.
-Missing origin disables browser Chat access while Orders remains usable.
+Missing origin disables protected browser Chat and Graph access while Orders remains usable.
 An Ollama outage does not alter core `/api/health` readiness.
 
 The default test suite skips real inference. To run the explicit synthetic check
@@ -270,14 +332,23 @@ Send a question, expand purchase-history activity, and open an evidence link to
 inspect the recorded order or product. One response runs globally. Stop preserves
 an incomplete answer; Retry explicitly starts a new attempt. Rename and delete
 are available from the conversation header. Deletion waits for active cleanup.
-Simple greeting-only messages are answered locally without invoking Ollama.
-If the model returns prose without a verified evidence marker after a successful
-fresh read, Chat discards that prose and shows a clearly labelled recorded-results
-summary built from the tool fields and application-owned evidence links. It never
-turns ungrounded prose into a factual answer. Context preparation failures are
+Ordinary replies use validated response modes and fixed application wording;
+greetings and thanks still invoke the selected model. A narrow capability-help
+request also has a fixed safe response when the model omits its mode. Purchase
+questions require fresh reads. Recorded answers preserve available fees, unit
+prices, quantities and dates, with only application-owned evidence links.
+Unsupported or uncertain requests remain incomplete when the records do not
+answer them. Context preparation failures are
 shown separately from provider outages.
 Empty lookups report that no rows were returned; partial results stay labelled
 partial, and multiple product candidates remain a choice for the user.
+For “what are the items I bought last month”, Chat freezes the Singapore calendar
+once per attempt and renders a bounded page of recorded item lines. “Next page”
+uses the saved tool cursor, month and page size after reconnect, including across
+calendar rollover, without another model generation. If the cursor expired on
+service restart, Chat asks you to restart the original month's listing. Pagination
+reads live records, so restart a listing after new imports when consistent coverage
+is needed. Delivery dates are scheduled slots, not confirmed arrivals.
 The history rail becomes a Conversations dialog on small screens.
 Chat fills the viewport below the application header, keeping the composer at the
 bottom without scrolling the outer page. Message history and the conversation list

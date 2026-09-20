@@ -18,8 +18,8 @@ def test_migration_is_repeatable_and_connection_pragmas_are_enabled(
     first = migrate(settings.database_path, settings.migrations_dir)
     second = migrate(settings.database_path, settings.migrations_dir)
 
-    assert first.current_version == 2
-    assert second.current_version == 2
+    assert first.current_version == 3
+    assert second.current_version == 3
     assert second.applied_versions == ()
     connection = connect_database(settings.database_path)
     try:
@@ -116,8 +116,8 @@ def test_concurrent_migration_is_serialized(tmp_path: Path, settings) -> None:
             )
         )
 
-    assert sorted(result.applied_versions for result in results) == [(), (1, 2)]
-    assert assert_schema_current(database, settings.migrations_dir) == 2
+    assert sorted(result.applied_versions for result in results) == [(), (1, 2, 3)]
+    assert assert_schema_current(database, settings.migrations_dir) == 3
 
 
 def test_schema_check_does_not_initialize_database(tmp_path: Path, settings) -> None:
@@ -138,17 +138,40 @@ def test_conversation_migration_preserves_existing_ingestion(settings, fixture_d
     old_migrations = tmp_path / "old-migrations"
     old_migrations.mkdir()
     shutil.copy(settings.migrations_dir / "001_ingestion.sql", old_migrations)
+    shutil.copy(settings.migrations_dir / "002_conversations.sql", old_migrations)
     old = replace(
         settings, database_path=tmp_path / "upgrade.sqlite3", migrations_dir=old_migrations
     )
     migrate(old.database_path, old.migrations_dir)
     import_eml(fixture_dir / "fairprice_order_minimal.eml", old)
+    connection = connect_database(old.database_path)
+    try:
+        connection.execute("INSERT INTO conversation_keys (id) VALUES ('conversation-1')")
+        connection.execute(
+            "INSERT INTO conversations (id,title,endpoint,model,created_at,activity_at) "
+            "VALUES ('conversation-1','Saved','chat','synthetic',"
+            "'2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00')"
+        )
+        connection.commit()
+    finally:
+        connection.close()
     with pytest.raises(MigrationError, match="behind"):
         assert_schema_current(old.database_path, settings.migrations_dir)
     upgraded = migrate(old.database_path, settings.migrations_dir)
-    assert upgraded.applied_versions == (2,)
+    assert upgraded.applied_versions == (3,)
     assert count_current_orders(old.database_path) == 1
-    assert assert_schema_current(old.database_path, settings.migrations_dir) == 2
+    connection = connect_database(old.database_path)
+    try:
+        assert (
+            connection.execute(
+                "SELECT title FROM conversations WHERE id='conversation-1'"
+            ).fetchone()[0]
+            == "Saved"
+        )
+        assert connection.execute("SELECT count(*) FROM orders").fetchone()[0] == 1
+    finally:
+        connection.close()
+    assert assert_schema_current(old.database_path, settings.migrations_dir) == 3
     with pytest.raises(MigrationError, match="newer"):
         assert_schema_current(old.database_path, old_migrations)
 
@@ -182,4 +205,4 @@ def test_failed_additive_migration_can_restore_verified_previous_database(
     sqlite_backup_module.create_verified_backup(backup, restored)
     assert assert_schema_current(restored, old_dir) == 1
     assert count_current_orders(restored) == 1
-    assert migrate(restored, settings.migrations_dir).applied_versions == (2,)
+    assert migrate(restored, settings.migrations_dir).applied_versions == (2, 3)

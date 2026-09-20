@@ -92,7 +92,7 @@ def test_metadata_counter_uses_rendered_prompt_with_model_bpe(settings):
         body = json.loads(request.content)
         assert body["_debug_render_only"] is True
         assert body["think"] is False
-        assert len(body["tools"]) == 4
+        assert len(body["tools"]) == 5
         return httpx.Response(200, json={"_debug_info": {"rendered_template": "<|im_start|>hi"}})
 
     async def run():

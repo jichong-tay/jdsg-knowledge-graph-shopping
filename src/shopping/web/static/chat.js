@@ -8,13 +8,14 @@
   const dialog = byId("chat-dialog"), rail = byId("chat-rail");
   const encoder = new TextEncoder(), decoder = new TextDecoder();
   let epoch = 0;
-  let socket, ready = false, selected = null, conversation = null, draftLoaded = false;
+  let socket, ready = false, selected = null, conversation = null, draftLoaded = false, selectingTarget = null;
   let availability = "available", attempts = new Map(), older = null, libraryCursor = null;
   let reconnectTimer, heartbeat, lastSeen = 0, started = 0, retryNumber = 0, disposed = false;
   let partial = null, refreshPending = false, selecting = null, library = new Map();
   let pending = read("chat-pending", null), restored = read("chat-selected", null);
   const toolNames = {get_order: "Read order", search_products: "Find products",
-    get_product_history: "Read product history", list_recent_orders: "Read recent orders"};
+    get_product_history: "Read product history", list_recent_orders: "Read recent orders",
+    list_purchase_items: "Read purchase items"};
 
   function read(key, fallback) {
     try { return JSON.parse(sessionStorage.getItem(key)) ?? fallback; } catch (_) { return fallback; }
@@ -84,6 +85,7 @@
   }
   function select(cid) {
     saveDraft();
+    selectingTarget = cid;
     selecting = send("subscribe", {conversation_id: cid});
     if (!selecting) notice("Reconnect to open another conversation. Your draft is preserved.");
   }
@@ -139,6 +141,7 @@
         const reason = {provider_unavailable: "Ollama is unavailable. Try again when it is running.",
           accounting_unsupported: "The model configuration needs verification.",
           missing_evidence: "The response did not include a verified purchase link. Retry the question.",
+          empty_response: "The assistant returned no usable clarification. Send your question again.",
           context_unavailable: "Context could not be prepared for this response. Retry the question.",
           deadline: "The response reached its time limit.",
           cleanup_fault: "Cleanup could not be confirmed. The service needs to restart.",
@@ -218,13 +221,15 @@
       select(restored);
       connectedNotice();
     } else if (value.type === "draft") {
-      if (value.id !== selecting) return;
+      if (value.id !== selecting || selectingTarget !== null) return;
       selected = value.conversation_id; draftLoaded = true; conversation = null; attempts.clear(); older = null;
+      selecting = null; selectingTarget = null;
       restored = null; store("chat-selected", null);
       input.value = read("chat-draft:new", ""); render(); renderLibrary(); input.focus();
     } else if (value.type === "snapshot") {
-      if (value.id === selecting) {
+      if (value.id === selecting && value.conversation.id === selectingTarget) {
         selected = value.conversation.id; attempts.clear(); conversation = null;
+        selecting = null; selectingTarget = null;
         input.value = read("chat-draft:" + selected, ""); draftLoaded = true;
         restored = selected; store("chat-selected", selected);
       }
@@ -256,17 +261,24 @@
     } else if (value.type === "gone") {
       gone(value.conversation_id);
     } else if (value.type === "error") {
+      const failedSelection = value.id === selecting ? selectingTarget : null;
       if (pending?.id === value.id) { pending = null; store("chat-pending", null); }
       refreshPending = false;
       const messages = {busy: "Another response is running. Your draft is preserved.",
         faulted: "Responses are unavailable until the service restarts. Saved history is still readable.",
         configuration_changed: "This conversation uses a different model configuration. Start a new conversation.",
         cleanup_fault: "Cleanup could not be confirmed. The conversation is still saved. Restart the service before deleting again.",
+        empty_response: "The assistant returned no usable clarification. Send your question again.",
         gone: "This conversation is gone. Choose New conversation to continue.",
         storage_failure: "Saving failed. Reconnect to check the last saved state.",
         persistence_or_runtime_failure: "The response could not be saved or finished. Reconnect to check the last saved state."};
-      notice(messages[value.code] || "The command was rejected. Your draft is preserved.");
-      if (value.code === "gone") gone(selected || restored);
+      notice(value.code === "gone" && failedSelection && selected !== failedSelection
+        ? "That conversation is no longer available. Your current conversation is still open."
+        : (messages[value.code] || "The command was rejected. Your draft is preserved."));
+      if (value.code === "gone" && failedSelection) {
+        selecting = null; selectingTarget = null;
+        gone(failedSelection);
+      }
     } else if (["availability", "pong"].includes(value.type)) connectedNotice();
     else throw new Error("protocol");
   }

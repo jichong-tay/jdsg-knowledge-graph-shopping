@@ -1,12 +1,28 @@
 # Chat reliability and useful purchase answers — Implementation Plan
 
-> **For agentic workers:** Use `superpowers:subagent-driven-development` or
-> `superpowers:executing-plans` when implementation is requested. This is a proposed
-> plan, not authorization to execute it. The user explicitly requested review and
-> planning only. Preserve the existing uncommitted patch while reviewing its parts.
+**Implementation update — 21 September 2026 (Singapore):** The operator subsequently
+authorized execution. Ticket 22 records the completed local repairs and verification.
+The unchecked task lists below preserve the original planning record rather than
+serve as current status. See the ticket's final acceptance and the
+[execution ledger](ticket-22-execution.md), including measured model compatibility
+adjustments, actual-data checks and remaining host-verification limits.
 
-**Goal:** Make ordinary conversation complete normally and answer “what are the
-items i bought last month” with the correct recorded items, dates, quantities,
+**Queued:** [Ticket 22](../issues/22-implement-chat-remediation.md) executes this
+accepted plan immediately after
+[ticket 21's graph foundation](../issues/21-build-product-family-foundation.md).
+[Ticket 19](../issues/19-define-chat-remediation-scope-and-acceptance.md) is the
+resolved decision record, not evidence that its defects were fixed. This ordering
+is project priority; the lifecycle repairs do not technically depend on graph data.
+
+> **For agentic workers:** Use `superpowers:subagent-driven-development` or
+> `superpowers:executing-plans` when implementation is requested. The operator has
+> accepted the remediation scope and acceptance bar, not execution. No fixes are
+> authorized by this document. Preserve the existing partial patch, checkpointed
+> in `b5e6018`, while assessing its parts. Retain Luna/low for later implementation.
+
+**Goal:** Keep Chat usable after Stop or malformed responses, preserve valid
+Conversation selection/subscriptions, make ordinary conversation complete normally,
+and answer “what are the items i bought last month” with the correct recorded items, dates, quantities,
 purchase links, and honest pagination.
 
 **Architecture:** Keep the existing Python/Ollama loop, SQLite, saved Conversations,
@@ -21,14 +37,24 @@ Ollama/Qwen3.5 9B with thinking disabled. No new runtime dependency is proposed.
 [Chat plan](chat-mvp.md), [read contracts](../issues/02-define-read-tools.md),
 [runtime contract](../issues/06-define-agent-runtime.md), and
 [small acceptance checklist](../issues/09-plan-implementation-slices.md).
-This proposal explicitly changes the four-read-tool scope to five. Existing
-decisions remain authoritative until this change is accepted for implementation.
+The operator accepted all four decisions in
+[Define Chat remediation scope and acceptance](../issues/19-define-chat-remediation-scope-and-acceptance.md).
+This supersedes the original four-tool count with a five-tool target while retaining
+the other accepted contracts. Four tools currently exist; the fifth and the repairs
+below remain unimplemented. Read the
+[Chat investigation handoff](../research/chat-investigation-handoff.md) for evidence
+and the earlier proposal history. The order below now puts R1–R3 first.
 
 ## Global constraints
 
 - SQLite remains authoritative; read current revisions only, including `placed`.
 - Purchase date remains `delivery_at`, interpreted in `Asia/Singapore`. Missing
-  dates remain unknown; source-email dates are not substitutes.
+  dates remain unknown; source-email dates are not substitutes. Current records
+  describe scheduled delivery slots, not confirmed arrivals. This agrees with the
+  later delivery-date decision in ticket 20.
+- Monthly item listing retains individual repeated lines. Ticket 20's proposed
+  grouping for purchase-frequency analysis does not change this listing contract;
+  graph analytics and predictions remain outside this remediation plan.
 - Preserve money as integer cents with currency. Do not sum partial pages, merge
   distinct products, infer completion, or estimate missing quantities.
 - Keep 4 model requests, 8 proposed tool calls, 180 seconds work, 5 seconds cleanup,
@@ -43,23 +69,34 @@ decisions remain authoritative until this change is accepted for implementation.
   automated/model checks. Do not copy household facts into plans, fixtures, logs,
   terminal output, screenshots, or research prompts.
 
-## Review focus
+## Review focus and execution order
 
-1. Relative dates at a Singapore month boundary and January rollover must select
-   the previous complete calendar month, not the last 30 days. Owned by task 2.
-2. A month with many orders/items must remain useful within the existing budget;
-   a displayed first page must not imply full coverage. Owned by tasks 3 and 4.
-3. Empty months, unknown dates, and replaced revisions must not become invented
-   purchases or false claims that no purchases ever occurred. Owned by task 3.
-4. Greetings, capabilities, and thanks need no purchase evidence; a mixed request
-   such as “hello, list last month's items” still needs a fresh read. Owned by task 4.
-5. A successful tool read or valid citation alone does not prove an answer is
-   relevant or correct. Test the actual requested facts and answer path. Task 5.
+1. Preserve the baseline, then repair Stop/tool-result and marker-only completion
+   faults. A later valid send must work without restart. Tasks 1–2.
+2. Failed selection of stale B must preserve A in both browser state and server
+   subscription. Task 3.
+3. Ordinary replies, purchase claims, empty/partial results, and incomplete answers
+   need explicit behavior. Validate the proposed protocol with the installed model
+   before relying on it, and preserve requested fields in fallback handling. Task 4.
+4. Resolve the previous complete calendar month using a frozen Singapore date,
+   including January rollover. Task 5.
+5. Retrieve current monthly item rows directly within existing limits; retain
+   repeated lines, exclude unknown dates honestly, and preserve month/limit on
+   continuation. Tasks 6–7.
+6. Assert actual requested facts and recovery, not only completion or a valid link.
+   Distinguish local/model/browser/operator checks from homelab acceptance. Task 8.
 
 ## Diagnosis and confidence
 
 ### Confirmed from code and synthetic review
 
+- Stop racing with a returning tool result can forward unsaved Evidence to terminal
+  persistence, leaving the saved attempt `stopping` and generation `faulted` (R1).
+- Marker-only clarification/unsupported output can become empty completed text;
+  storage correctly rejects it, but subsequent generation becomes `faulted` (R2).
+- Selecting stale B while viewing A can clear A's client state while retaining B,
+  and the server subscription changes before snapshot success (R3). A's stored
+  data is not deleted. See the handoff for the synthetic probes and their limits.
 - `assistant/context.py` supplies static instructions without an application date.
   The model has no dependable reference for “last month.”
 - `assistant/tools.py` offers no month/date filter. All four tools also share one
@@ -87,7 +124,7 @@ they do not prove whether that attempt chose the wrong month, skipped tools, hit
 limit, or used a different development database. Do not label the Ollama tunnel as
 the cause without new transport evidence.
 
-## Proposed behavior
+## Accepted target behavior — not yet implemented
 
 - On 20 September 2026 in Singapore, “last month” means **1–31 August 2026**.
   The equivalent UTC interval is `[2026-07-31T16:00:00+00:00,
@@ -109,7 +146,7 @@ the cause without new transport evidence.
 | --- | --- | --- |
 | Prompt changes alone | Cannot create a missing cross-order month query | Insufficient |
 | Date-filter `list_recent_orders`, then fetch each order | Still needs one or more detail calls per order | Insufficient at larger months |
-| Add `list_purchase_items` | One bounded page directly retrieves matching item rows across orders | Recommended scope change |
+| Add `list_purchase_items` | One bounded page directly retrieves matching item rows across orders | Accepted scope; implementation pending |
 
 Do not broaden product search, add spending analytics, or change the model as part
 of this query fix. Those need their own observed failing examples.
@@ -117,11 +154,20 @@ of this query fix. Those need their own observed failing examples.
 ## Task 1: Establish a reproducible baseline
 
 **Files:** `tests/assistant/test_assistant_runtime.py`,
-`tests/assistant/test_assistant_tools.py`, `tests/conftest.py`,
-`tests/integration/test_ollama_smoke.py`.
+`tests/assistant/test_assistant_tools.py`, `tests/assistant/test_conversations.py`,
+`tests/web/test_chat_streaming.py`, `tests/browser/chat_draft_recovery.js`,
+`tests/conftest.py`, `tests/integration/test_ollama_smoke.py`.
 
-- [ ] Preserve and record the existing worktree diff; do not overwrite unrelated
-  work or treat earlier passing tests as proof of this query's correctness.
+Read the handoff and establish the lifecycle baseline first. Stage the month-query
+fixture and model checks below for tasks 5–8; do not let them delay R1–R3.
+
+- [ ] Record HEAD and any worktree diff, preserving the checkpointed partial patch.
+  Do not overwrite unrelated work or treat earlier passing tests as proof of this
+  query's correctness.
+- [ ] Reproduce the handoff's Stop race, marker-only completion, and stale-switch
+  probes using synthetic data. Record safe outcome categories. Turn their desired
+  outcomes into regression tests in tasks 2–3; use controlled synchronization for
+  the Stop race instead of a timing-only sleep.
 - [ ] Check that the running local app uses the intended development database and
   current code. Report only configuration match/mismatch, schema readiness, and
   safe outcome categories. Do not print `.env`, household rows, or process secrets.
@@ -140,7 +186,83 @@ The baseline separates configuration, intent/date resolution, retrieval, respons
 formatting, and completion failures. An unrelated transport failure is recorded
 separately rather than explained by these retrieval changes.
 
-## Task 2: Supply authoritative calendar context
+## Task 2: Contain terminal-state failures (R1/R2)
+
+**Modify:** `src/shopping/assistant/runtime.py`, `src/shopping/web/chat.py`,
+`tests/assistant/test_assistant_runtime.py`, `tests/web/test_chat_streaming.py`,
+`tests/assistant/test_conversations.py`.
+**Inspect:** `src/shopping/assistant/conversations.py`; retain its strict validation.
+
+- [ ] Convert the handoff's `stop_race.py` into a deterministic integrated
+  runtime → WebSocket → storage regression. Force Stop to be accepted while a
+  read result is returning and before the tool outcome is saved.
+- [ ] Reconcile the stopped terminal text and Evidence with durable tool results.
+  Do not forward unsaved Evidence, weaken storage validation, or let late complete
+  output overwrite an accepted Stop. Keep saved-before-display behavior.
+- [ ] Test both `[[unsupported]]` and `[[clarification]]` with no visible content.
+  Validate nonempty final text after mode handling; save a failed/incomplete
+  outcome instead of returning an empty completed response or a global fault.
+- [ ] After each trigger, assert the saved terminal status, text/Evidence consistency,
+  reload result, released response slot, and successful next valid send without
+  restart. Preserve the distinct fault for genuinely unsettled cleanup and real
+  persistence failures; do not swallow every exception to keep the slot available.
+- [ ] Retain numeric batch-position tool-call IDs and existing persistence/reload
+  coverage. Run focused runtime, storage, and streaming regressions.
+
+## Task 3: Preserve Conversation state on failed switching (R3)
+
+**Modify:** `src/shopping/web/static/chat.js`, `src/shopping/web/chat.py`,
+`tests/browser/chat_draft_recovery.js`, `tests/web/test_chat_streaming.py`.
+
+- [ ] Turn the handoff's stale-B selection probe into a client regression. Track
+  the requested Conversation target with its command ID so a `gone` response for
+  B cannot clear the still-valid A selection or library entry.
+- [ ] Make failed subscription/snapshot switching leave or restore a consistent
+  server subscription. Cover failure after the old selection is known, not just
+  the browser's displayed title.
+- [ ] Verify A's stored history and visible selection remain, only stale B is
+  removed, and later A updates arrive. Ensure successful switches and genuinely
+  deleted current Conversations retain their correct behavior.
+- [ ] Verify through the integrated browser/server flow as well as the minimal
+  client handler test. Do not describe the archived Node VM probe alone as browser
+  integration evidence.
+
+## Task 4: Define truthful response and fallback behavior (R4/R6)
+
+**Modify:** `src/shopping/assistant/runtime.py`, `src/shopping/assistant/context.py`,
+`src/shopping/web/static/chat.js`, `tests/assistant/test_assistant_runtime.py`,
+`tests/web/test_chat_streaming.py`, `tests/browser/chat_draft_recovery.js`.
+**Create:** `src/shopping/assistant/answers.py` for focused response validation and
+record rendering extracted from the growing runtime module.
+
+- [ ] Keep completion policy explicit: conversation/help, clarification,
+  unsupported request, grounded answer, empty result, and incomplete generation
+  have different requirements. Do not globally accept uncited free-form prose.
+- [ ] Replace the input greeting phrase allowlist with a response contract. For
+  nonfactual greeting/help/acknowledgement modes, prefer application-owned wording
+  selected by a validated mode rather than trusting arbitrary uncited shopping
+  claims. Mixed greeting/purchase questions must still invoke a read tool.
+- [ ] Before choosing the wire encoding, run a small synthetic probe on the
+  installed Qwen/Ollama combination for these modes and tool use. Start with the
+  existing marker protocol extended to typed conversational modes. Test structured
+  output only if native support is verified. Do not assume JSON format support or
+  add hidden repair requests. Record the chosen encoding and exact parser tests
+  before changing the completion parser; if the probe fails, report that design
+  result instead of widening the evidence bypass.
+- [ ] Preserve task 2's rejection of empty completed text after mode handling.
+  Validate evidence references against this attempt's reads. A valid link is necessary for
+  shopping claims but remains insufficient proof that arbitrary prose is factual.
+- [ ] Do not silently label arbitrary tool-record fallbacks as an answered question.
+  For other supported questions, either produce the requested grounded answer or
+  explain that answer generation was incomplete while retaining useful links.
+  Fix the parent-product/empty-history distinction and cover requested fee/price
+  fields so a total/items dump cannot pass as an answer to those questions.
+- [ ] Verify ordinary final responses replace provisional text consistently in
+  saved state and on reconnect. Test requested fees/unit prices, explicit empty
+  product history, mixed greeting/purchase requests, and malicious mode-prefixed
+  shopping claims. Keep task 2's failure isolation and existing budgets intact.
+
+## Task 5: Supply authoritative calendar context
 
 **Create:** `src/shopping/assistant/dates.py`,
 `tests/assistant/test_assistant_dates.py`.
@@ -174,7 +296,7 @@ date and previous calendar month alongside the static instructions.
   current attempt's date context. A later attempt gets a fresh reference date.
 - [ ] Run the date, context, and runtime tests; review the change independently.
 
-## Task 3: Retrieve a month of recorded items directly
+## Task 6: Retrieve a month of recorded items directly
 
 **Modify:** `src/shopping/assistant/tools.py`, `src/shopping/purchases/queries.py`,
 `tests/assistant/test_assistant_tools.py`, `tests/assistant/test_conversations.py`.
@@ -214,49 +336,30 @@ date, status and currency. Existing order/product evidence entries supply links.
 - [ ] Give each read tool a distinct purpose/argument description. The new tool is
   for item listings across a specified calendar month, not totals or forecasts.
 
-## Task 4: Make completion and rendered answers truthful
+## Task 7: Render and continue monthly item pages (R5)
 
-**Modify:** `src/shopping/assistant/runtime.py`, `src/shopping/assistant/context.py`,
-`src/shopping/web/static/chat.js`, `tests/assistant/test_assistant_runtime.py`,
-`tests/web/test_chat_streaming.py`, `tests/browser/chat_draft_recovery.js`.
-**Create:** `src/shopping/assistant/answers.py` for focused response validation and
-record rendering extracted from the growing runtime module.
+**Modify:** `src/shopping/assistant/answers.py`, `src/shopping/assistant/runtime.py`,
+`src/shopping/assistant/context.py`, `src/shopping/web/static/chat.js`,
+`tests/assistant/test_assistant_runtime.py`, `tests/web/test_chat_streaming.py`,
+`tests/browser/chat_draft_recovery.js`.
 
-- [ ] Keep completion policy explicit: conversation/help, clarification,
-  unsupported request, grounded answer, empty result, and incomplete generation
-  have different requirements. Do not globally accept uncited free-form prose.
-- [ ] Replace the input greeting phrase allowlist with a response contract. For
-  nonfactual greeting/help/acknowledgement modes, prefer application-owned wording
-  selected by a validated mode rather than trusting arbitrary uncited shopping
-  claims. Mixed greeting/purchase questions must still invoke a read tool.
-- [ ] Before choosing the wire encoding, run a small synthetic probe on the
-  installed Qwen/Ollama combination for these modes and tool use. Start with the
-  existing marker protocol extended to typed conversational modes. Test structured
-  output only if native support is verified. Do not assume JSON format support or
-  add hidden repair requests. Record the chosen encoding and exact parser tests
-  before changing the completion parser; if the probe fails, report that design
-  result instead of widening the evidence bypass.
-- [ ] Reject empty completed text even when a mode marker is present. Validate
-  evidence references against this attempt's reads. A valid link is necessary for
-  shopping claims but remains insufficient proof that arbitrary prose is factual.
 - [ ] Render a successful `list_purchase_items` page from its validated recorded
   rows and evidence, preserving the month, quantities, dates, and partial flag.
   This exact listing is useful deterministic output, not a generic record dump.
   Keep the renderer under existing saved-text/evidence limits and escape untrusted
   names without creating markers, HTML, or fake rows.
-- [ ] Do not silently label arbitrary tool-record fallbacks as an answered question.
-  For other supported questions, either produce the requested grounded answer or
-  explain that answer generation was incomplete while retaining useful links.
-  Fix the parent-product/empty-history distinction and cover requested fee/price
-  fields so a total/items dump cannot pass as an answer to those questions.
 - [ ] Add the new human-readable tool activity label. Keep browser copy specific
   enough to distinguish a failed read/generation from valid empty/partial results.
 - [ ] Verify streamed text is replaced consistently by the final recorded answer,
   including saved state and reconnect. “Next page” reuses the original resolved
   month; an expired cursor explicitly restarts listing instead of pretending to
   continue. Existing cancellation and duplicate-command safeguards must hold.
+- [ ] Preserve the original resolved month and validated limit across turns,
+  reconnect, and calendar rollover. Cover a nondefault limit as well as the default.
+  State partial coverage and missing-date limitations without claiming an immutable
+  snapshot of live data or computing whole-month totals from a page.
 
-## Task 5: Verify useful answers end to end
+## Task 8: Verify useful answers end to end
 
 **Modify:** `tests/integration/test_ollama_smoke.py`,
 `tests/web/test_chat_streaming.py`, `tests/browser/chat_draft_recovery.js`,
@@ -266,6 +369,9 @@ Keep a small fixed set, consistent with ticket 09, rather than a new benchmark:
 
 | Input/condition | Acceptance |
 | --- | --- |
+| Stop during returning tool result | Durable stopped/incomplete state, only saved Evidence, and next send succeeds |
+| Marker-only clarification/unsupported output | Failed/incomplete attempt, no global fault, and next send succeeds |
+| Open stale B while viewing A | Only B removed; A remains selected and receives updates |
 | “hello world”, “what can you do?”, “thanks” | Relevant nonempty reply; no purchase-link failure |
 | Exact last-month query, September clock | August items, correct quantities/dates, valid purchase links |
 | Same query, January clock | December of the preceding year |
@@ -296,11 +402,15 @@ Keep a small fixed set, consistent with ticket 09, rather than a new benchmark:
 
 ## Completion bar and present status
 
-Completion requires the exact last-month question to return the correct, useful
-bounded item listing, ordinary conversation to complete, and the same result to
-survive save/reload. A working tunnel, successful tool call, green total smoke, or
+Completion requires all six repairs: correct saved terminal outcomes and a usable
+next send after R1/R2, consistent A selection/subscription after R3, truthful
+ordinary/fallback behavior, and a correct, useful bounded item listing for the exact
+last-month question. Results must survive save/reload. A working tunnel, successful
+tool call, green total smoke, or
 generic fallback is not sufficient evidence by itself.
 
 This document is planning only. No source, test, configuration, database, model,
-server, or deployment change was made while preparing it. The earlier uncommitted
-fix remains present and is not certified as a complete fix by this plan.
+server, or deployment change was made while preparing it. The earlier partial
+patch is checkpointed in `b5e6018` and is not certified as a complete fix by this
+plan. The operator's accepted scope is recorded in the resolved decision ticket;
+implementation and all new verification remain pending.

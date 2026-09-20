@@ -11,6 +11,7 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
+from shopping.assistant.dates import month_bounds
 from shopping.storage.connection import connect_database, transaction
 
 _ORDER_FROM = """
@@ -95,6 +96,22 @@ def read_page(
                     "ORDER BY oi.line_number, oi.id"
                 )
                 parameters = (arguments["order_id"],)
+            elif name == "list_purchase_items":
+                parent = {
+                    "month": arguments["month"],
+                    "timezone": "Asia/Singapore",
+                    "limit": arguments["limit"],
+                }
+                start, end = month_bounds(arguments["month"])
+                sql = (
+                    f"SELECT {_ITEM_FIELDS}, o.id AS order_id, o.external_order_id, "
+                    "r.name AS retailer_name, rev.delivery_at AS purchase_date, "
+                    "rev.status, rev.currency "
+                    f"{_ITEM_FROM} "
+                    "WHERE rev.delivery_at >= ? AND rev.delivery_at < ? "
+                    "ORDER BY rev.delivery_at DESC, o.id DESC, oi.line_number, oi.id"
+                )
+                parameters = (start, end)
             else:
                 raise ValueError("Unknown read tool")
             rows = connection.execute(

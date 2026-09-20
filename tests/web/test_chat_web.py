@@ -84,6 +84,7 @@ def test_malformed_and_oversized_frames_close_without_payload_echo(settings, fra
         ) as socket:
             socket.send_json({"v": 1, "type": "initialize", "id": "init", "token": page_key})
             socket.receive_json()
+            socket.receive_json()
             socket.send_text(frame)
             with pytest.raises(WebSocketDisconnect) as closed:
                 socket.receive_json()
@@ -108,6 +109,7 @@ def test_uninitialized_socket_times_out_and_live_token_expires(settings, monkeyp
         ) as socket:
             socket.send_json({"v": 1, "type": "initialize", "id": "init", "token": page_key})
             assert socket.receive_json()["type"] == "ready"
+            assert socket.receive_json()["type"] == "library"
             with pytest.raises(WebSocketDisconnect) as expired:
                 socket.receive_json()
             assert expired.value.code == 4401
@@ -120,6 +122,7 @@ def test_commands_are_rate_limited_per_session_and_heartbeats_are_separate(setti
             "ws://127.0.0.1:8000/chat/ws", headers={"Origin": ORIGIN}
         ) as socket:
             socket.send_json({"v": 1, "type": "initialize", "id": "init", "token": page_key})
+            socket.receive_json()
             socket.receive_json()
             for _ in range(12):
                 socket.send_json({"v": 1, "type": "ping"})

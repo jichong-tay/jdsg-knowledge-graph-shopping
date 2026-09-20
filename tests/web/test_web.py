@@ -28,7 +28,7 @@ def test_dashboard_health_and_order_page(settings, fixture_dir: Path) -> None:
     assert "EXAMPLE01" in dashboard.text
     assert health.status_code == 200
     assert health.json()["ready"] is get_runtime_info().sqlite_wal_safe
-    assert health.json()["database"]["schema_version"] == 2
+    assert health.json()["database"]["schema_version"] == 3
     assert order.status_code == 200
     assert "Example Oat Drink 1L" in order.text
     assert "SGD 14.00" in order.text
@@ -79,7 +79,8 @@ def test_application_shell_links_only_to_live_pages(settings) -> None:
     assert 'href="/orders"' in response.text
     assert 'href="/system"' in response.text
     assert 'href="/chat"' in response.text
-    assert "Graph" not in response.text
+    assert 'href="/graph"' in response.text
+    assert "Graph" in response.text
 
 
 def test_orders_page_exposes_searchable_current_order_history(settings, fixture_dir: Path) -> None:

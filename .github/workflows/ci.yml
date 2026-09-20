@@ -85,15 +85,16 @@ jobs:
           "$SHOPPING_WHEEL_VENV/bin/python" -I -c '
           from importlib.resources import files
           package = files("shopping")
-          for name in ("001_ingestion.sql", "002_conversations.sql"):
+          for name in ("001_ingestion.sql", "002_conversations.sql", "003_product_families.sql"):
               assert package.joinpath("storage", "migrations", name).is_file(), name
-          for name in ("shopping.css", "shopping.js", "chat.js"):
+          for name in ("shopping.css", "shopping.js", "chat.js", "graph.js", "vendor/cytoscape-3.34.3.min.js", "vendor/cytoscape-3.34.3.LICENSE"):
               assert package.joinpath("web", "static", name).is_file(), name
           '
           chmod -R a-w "$SHOPPING_WHEEL_VENV"
           cd "$SHOPPING_WHEEL_STATE_DIR"
           export SHOPPING_ENV=development
           export SHOPPING_DATA_DIR="$SHOPPING_WHEEL_STATE_DIR"
+          export SHOPPING_APP_ORIGIN=http://127.0.0.1:8000
           "$SHOPPING_WHEEL_VENV/bin/shopping" migrate \
             --database "$SHOPPING_WHEEL_STATE_DIR/shopping.sqlite3"
           "$SHOPPING_WHEEL_VENV/bin/python" -I -c '
@@ -102,15 +103,21 @@ jobs:
           import shopping
           from shopping.config import load_settings
           from shopping.web import create_app
+          from starlette.testclient import TestClient
           assert Path(shopping.__file__).resolve().is_relative_to(
               Path(os.environ["SHOPPING_WHEEL_VENV"]).resolve()
           )
-          with create_app(load_settings()).get_testclient() as client:
+          with TestClient(create_app(load_settings()), base_url="http://127.0.0.1:8000") as client:
               response = client.get("/api/health")
               assert response.status_code == 200
-              assert response.json()["database"]["schema_version"] == 2
+              assert response.json()["database"]["schema_version"] == 3
               assert client.get("/").status_code == 200
-              for name in ("shopping.css", "shopping.js", "chat.js"):
+              graph_page = client.get("/graph")
+              assert graph_page.status_code == 200
+              assert "/static/vendor/cytoscape-3.34.3.min.js" in graph_page.text
+              assert client.get("/graph/view").status_code == 200
+              assert client.get("/graph/token", headers={"X-Graph-Page": "1"}).status_code == 200
+              for name in ("shopping.css", "shopping.js", "chat.js", "graph.js", "vendor/cytoscape-3.34.3.min.js"):
                   asset = client.get(f"/static/{name}")
                   assert asset.status_code == 200 and asset.content, name
           '

@@ -276,9 +276,15 @@ not a reason to call the whole Chat feature fixed.
 
 Run from the repository root with its existing environment. The three scripts
 below are archived investigation probes, not committed regression tests or fixes.
+They are retained for historical investigation only; they are not release tests
+or pending fixes. Permanent coverage now lives in
+[`test_chat_stop_race.py`](../../../tests/web/test_chat_stop_race.py),
+[`test_chat_streaming.py`](../../../tests/web/test_chat_streaming.py) (marker-only
+and stale-response cases), and [`chat_switching.js`](../../../tests/browser/chat_switching.js).
 They use synthetic data/fake model responses and make no real Ollama request.
-Their assertions describe desired behavior and **currently exit nonzero because
-they reproduce bugs**. Python databases are temporary; the Node probe only reads
+At the time of the original investigation, their assertions described desired
+behavior and reproduced bugs; the probes are retained as dated evidence rather
+than a current pass/fail gate. Python databases are temporary; the Node probe only reads
 the shipped JavaScript and evaluates it in an isolated VM.
 
 ```bash

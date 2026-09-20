@@ -6,13 +6,19 @@ import re
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import httpx2 as httpx
 
-from shopping.assistant.context import TokenCounter, bounded_messages, create_counter
+from shopping.assistant.answers import render_month_items, render_recorded
+from shopping.assistant.context import (
+    TokenCounter,
+    _validate_exchanges,
+    bounded_messages,
+    create_counter,
+)
+from shopping.assistant.continuation import monthly_continuation
 from shopping.assistant.ollama import stream_chat
 from shopping.assistant.tools import dispatch_tool, encode_result, prepare_call
 from shopping.config import Settings
@@ -28,8 +34,35 @@ _faulted = False
 Stream = Callable[[Settings, list[dict]], AsyncGenerator[dict]]
 Emitter = Callable[[dict], Awaitable[None]]
 _REFERENCE = re.compile(r"\[\[((?:order|product):[1-9][0-9]*)\]\]")
-_MODE = re.compile(r"^\[\[(clarification|unsupported)\]\]\s*")
-_GREETING = re.compile(r"^(?:hi|hello|hey|good morning|good afternoon|good evening)[!. ,]*$", re.I)
+_MODE = re.compile(
+    r"^\[\[(conversation(?::(greeting|thanks|help))?|clarification|unsupported)\]\]\s*"
+)
+_PERSONAL_PURCHASE = re.compile(
+    r"(?:\b(?:i|we|my|our)\s+(?:bought|purchased|paid|spent)\b|"
+    r"\bwhat\s+did\s+(?:i|we)\s+buy\b|"
+    r"\b(?:my|our)\s+(?:orders?|items?|purchases?)\b|"
+    r"\b(?:what|which|show|list|find)\b[^?\n]{0,80}\b(?:orders?|items?|products?|purchases?)\b|"
+    r"\bwhat\s+(?:are\s+)?(?:the\s+)?items?\s+(?:i|we)\s+bought\b|"
+    r"\border\s*#?\d+\b)",
+    re.I,
+)
+_CAPABILITY_REQUEST = re.compile(
+    r"^\s*(?:what\s+can\s+you\s+do|how\s+can\s+you\s+help(?:\s+me)?|"
+    r"what\s+are\s+your\s+capabilities)\s*\??\s*$",
+    re.I,
+)
+_CONVERSATION_TEXT = {
+    "greeting": "Hello! Ask me about your recorded orders or products.",
+    "thanks": "You're welcome!",
+    "help": (
+        "I can help you find current recorded orders and purchase items, show monthly rows, "
+        "explain unknown dates, and continue a partial page. I do not forecast future purchases "
+        "or claim an inventory catalog."
+    ),
+    "conversation": "I can help you with your recorded orders or products.",
+    "clarification": "Please clarify which product or purchase you mean.",
+    "unsupported": "I can help with recorded shopping information, but not that request.",
+}
 
 
 def availability() -> str:
@@ -48,123 +81,60 @@ def _finish(state: dict, status: str, code: str | None = None) -> dict:
     }
 
 
+def _rendered(state: dict, rendered: tuple[str, list[str], bool]) -> dict:
+    answer, refs, answered = rendered
+    evidence = {key: state["evidence"][key] for key in refs}
+    if (
+        len(json.dumps(answer, ensure_ascii=False).encode()) > MAX_OUTPUT_BYTES
+        or len(json.dumps(list(evidence.values()), ensure_ascii=False).encode()) > 8192
+    ):
+        return _finish(state, "incomplete", "output_limit")
+    state["text"], state["evidence"] = answer, evidence
+    return _finish(
+        state, "complete" if answered else "incomplete", None if answered else "answer_incomplete"
+    )
+
+
 def _complete(state: dict) -> dict:
     text = state["text"].strip()
     references = _REFERENCE.findall(text)
     mode = _MODE.match(text)
     remaining = _REFERENCE.sub("", _MODE.sub("", text))
+    capability_request = _CAPABILITY_REQUEST.fullmatch(state["question"]) is not None
+    if mode is not None and not remaining.strip():
+        state["text"] = ""
+        return _finish(state, "incomplete", "empty_response")
+    if capability_request and not _PERSONAL_PURCHASE.search(state["question"]):
+        state["text"] = _CONVERSATION_TEXT["help"]
+        state["evidence"] = {}
+        return _finish(state, "complete")
     if (
         "[[" in remaining
         or "]]" in remaining
         or any(reference not in state["evidence"] for reference in references)
     ):
         return _finish(state, "incomplete", "invalid_evidence")
-    if not text or (not references and mode is None):
+    if state["results"]:
+        rendered = render_recorded(state["question"], state["results"], state["evidence"])
+        if rendered is not None:
+            return _rendered(state, rendered)
+    if mode is not None:
+        mode_name = mode.group(1)
+        if mode_name.startswith("conversation") and _PERSONAL_PURCHASE.search(state["question"]):
+            return _finish(state, "incomplete", "missing_evidence")
+        state["text"] = _CONVERSATION_TEXT[mode.group(2) or mode_name]
+        state["evidence"] = {}
+        return _finish(state, "complete")
+    if _PERSONAL_PURCHASE.search(state["question"]) and not state["results"]:
+        return _finish(state, "incomplete", "missing_evidence")
+    if not text or not references:
         if any(result["status"] == "size_limit" for _, result in state["results"]):
             return _finish(state, "incomplete", "size_limit")
-        fallback = _recorded_fallback(state)
-        if fallback is not None:
-            answer, refs = fallback
-            evidence = {key: state["evidence"][key] for key in refs}
-            if (
-                len(json.dumps(answer, ensure_ascii=False).encode("utf-8")) > MAX_OUTPUT_BYTES
-                or len(json.dumps(list(evidence.values()), ensure_ascii=False).encode("utf-8"))
-                > 8192
-            ):
-                return _finish(state, "incomplete", "output_limit")
-            state["text"] = answer
-            state["evidence"] = evidence
-            return _finish(state, "complete")
         return _finish(state, "incomplete", "missing_evidence")
     state["text"] = _MODE.sub("", text)
     # Only return cited, application-owned links. Marker validity is not semantic proof.
     state["evidence"] = {key: state["evidence"][key] for key in dict.fromkeys(references)}
     return _finish(state, "complete")
-
-
-def _recorded_fallback(state: dict) -> tuple[str, list[str]] | None:
-    """Render successful lookups, never the uncited model's claims or inferred totals."""
-    results = state["results"]
-    if not results or any(result["status"] not in {"ok", "not_found"} for _, result in results):
-        return None
-    lines = ["Here are the recorded details from this lookup:"]
-    refs: list[str] = []
-
-    def clean(value: object) -> str:
-        # Stored values cannot add evidence markers or impersonate another output row.
-        return " ".join(str(value).splitlines()).replace("[", "[ ").replace("]", " ]")
-
-    def date(value: object) -> str:
-        if value:
-            try:
-                parsed = datetime.fromisoformat(str(value))
-                if parsed.tzinfo is not None:
-                    return parsed.astimezone(ZoneInfo("Asia/Singapore")).date().isoformat()
-            except ValueError:
-                pass
-        return "unknown"
-
-    def money(currency: object, cents: object) -> str:
-        if not isinstance(currency, str) or type(cents) is not int:
-            return "unknown"
-        major, minor = divmod(abs(cents), 100)
-        return f"{clean(currency)} {'-' if cents < 0 else ''}{major}.{minor:02d}"
-
-    for name, result in results:
-        if result["status"] == "not_found":
-            lines.append("No matching record was returned for this lookup.")
-            continue
-        data = result["data"]
-        items = data.get("items", [])
-        records = ([data] if "order_id" in data or "product_id" in data else []) + items
-        if name == "search_products" and items:
-            lines.append("Product candidates:")
-        if not records:
-            lines.append("No rows were returned for this lookup.")
-        for record in records:
-            row_refs = []
-            parts = []
-            for kind in ("order", "product"):
-                entity = record.get(f"{kind}_id")
-                if entity is None and kind == "order" and name == "get_order":
-                    entity = data.get("order_id")
-                if entity is not None:
-                    reference = f"{kind}:{entity}"
-                    if reference not in state["evidence"]:
-                        return None
-                    row_refs.append(reference)
-                    parts.append(f"{kind.title()} {entity}")
-                    if reference not in refs:
-                        refs.append(reference)
-            if not row_refs:
-                return None
-            label = record.get("raw_name") or record.get("canonical_name")
-            if label:
-                parts.append(clean(label))
-            if record.get("retailer_name"):
-                parts.append(f"from {clean(record['retailer_name'])}")
-            if "purchase_date" in record:
-                parts.append(f"purchase date {date(record['purchase_date'])}")
-            if "status" in record:
-                parts.append(f"status {clean(record['status'])}")
-            currency = record.get("currency", data.get("currency"))
-            if "total_cents" in record:
-                parts.append(f"total {money(currency, record['total_cents'])}")
-            if "line_number" in record:
-                parts.append(f"line {clean(record['line_number'])}")
-            if "quantity" in record:
-                quantity = record["quantity"]
-                quantity_text = "unknown" if quantity is None else clean(quantity)
-                unit = f" {clean(record['unit'])}" if record.get("unit") else ""
-                parts.append(f"quantity {quantity_text}{unit}")
-            if "net_cents" in record:
-                parts.append(f"line value {money(currency, record['net_cents'])}")
-            lines.append(" — ".join(parts) + " " + " ".join(f"[[{ref}]]" for ref in row_refs))
-        if name == "search_products" and (len(items) > 1 or result["truncated"]):
-            lines.append("Which product do you mean?")
-        if result["truncated"]:
-            lines.append("This lookup is partial; ask for the next page to see more recorded rows.")
-    return "\n".join(lines), refs
 
 
 async def _drive(
@@ -175,13 +145,16 @@ async def _drive(
     publish: Emitter,
     stream: Stream,
     count: TokenCounter,
+    instructions: str,
 ) -> dict:
     current: list[dict] = [{"role": "user", "content": question}]
     cache: dict[str, dict] = {}
     correction_used = False
     while state["model_requests"] < MAX_MODEL_REQUESTS:
         await publish({"type": "status", "status": "checking_context"})
-        messages, input_tokens = await bounded_messages(history, current, count)
+        messages, input_tokens = await bounded_messages(
+            history, current, count, instructions=instructions
+        )
         state["model_requests"] += 1
         await publish({"type": "status", "status": "generating"})
         calls = []
@@ -251,6 +224,7 @@ async def _drive(
                 ],
             }
         )
+        batch_results: list[dict] = []
         for position, (call, arguments) in enumerate(zip(calls, validated, strict=True)):
             key = encode_result({"name": call["name"], "arguments": arguments})
             call_id = f"{state['model_requests']}:{position}"
@@ -271,6 +245,7 @@ async def _drive(
                 state["reads"].append(read)
                 cache[key] = await asyncio.shield(read)
             result = cache[key]
+            batch_results.append(result)
             if result["status"] == "error":
                 return _finish(state, "incomplete", result["data"]["code"])
             state["evidence"].update({e["id"]: e for e in result["evidence"]})
@@ -289,6 +264,22 @@ async def _drive(
                     "result": result,
                 }
             )
+        if len(calls) == 1 and calls[0]["name"] == "list_purchase_items":
+            monthly = batch_results[0]
+            try:
+                answer, refs = render_month_items(monthly)
+            except ValueError:
+                return _finish(state, "incomplete", "invalid_result")
+            evidence = {key: state["evidence"][key] for key in refs}
+            if (
+                len(json.dumps(answer, ensure_ascii=False).encode("utf-8")) > MAX_OUTPUT_BYTES
+                or len(json.dumps(list(evidence.values()), ensure_ascii=False).encode("utf-8"))
+                > 8192
+            ):
+                return _finish(state, "incomplete", "output_limit")
+            state["text"] = answer
+            state["evidence"] = evidence
+            return _finish(state, "complete")
     return _finish(state, "incomplete", "model_limit")
 
 
@@ -302,6 +293,7 @@ async def run_attempt(
     emit: Emitter | None = None,
     stream: Stream = stream_chat,
     count_input: TokenCounter | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Collect one bounded attempt. Callers pass completed exchanges from one conversation.
 
@@ -329,15 +321,18 @@ async def run_attempt(
         return _finish(state, "rejected", "configuration_changed")
     if stop is not None and stop.is_set():
         return _finish(state, "rejected", "cancelled")
+    frozen_now = now if now is not None else datetime.now(UTC)
+    if frozen_now.tzinfo is None or frozen_now.utcoffset() is None:
+        return _finish(state, "rejected", "invalid_arguments")
+    from shopping.assistant.context import instructions_for
+
+    try:
+        instructions = instructions_for(frozen_now)
+    except TypeError, ValueError, OverflowError:
+        return _finish(state, "rejected", "invalid_arguments")
     if _faulted or not _SLOT.acquire(blocking=False):
         return _finish(state, "rejected", availability())
-    if _GREETING.fullmatch(question.strip()):
-        _SLOT.release()
-        state["text"] = "Hello! Ask me about your recorded orders or products."
-        result = _finish(state, "complete")
-        if emit is not None:
-            await emit({"type": "terminal", **result})
-        return result
+    state["question"] = question
     stopped = stop if stop is not None else asyncio.Event()
     terminal = False
     deadline = asyncio.get_running_loop().time() + WORK_SECONDS
@@ -357,12 +352,24 @@ async def run_attempt(
     async def work() -> dict:
         try:
             check_active()
+            history = completed_exchanges or []
+            _validate_exchanges(history)
+            continuation = monthly_continuation(question, history)
+            if continuation is not None:
+                return await _run_continuation(continuation)
             async with httpx.AsyncClient(
                 timeout=WORK_SECONDS, trust_env=False, follow_redirects=False
             ) as client:
                 counter = count_input or await create_counter(settings, client)
                 return await _drive(
-                    settings, question, completed_exchanges or [], state, publish, stream, counter
+                    settings,
+                    question,
+                    completed_exchanges or [],
+                    state,
+                    publish,
+                    stream,
+                    counter,
+                    instructions,
                 )
         except httpx.HTTPError, OSError:
             return _finish(state, "incomplete", "provider_unavailable")
@@ -377,6 +384,70 @@ async def run_attempt(
             }:
                 code = "context_unavailable"
             return _finish(state, "incomplete", code)
+
+    async def _run_continuation(resolution: dict) -> dict:
+        status = resolution["status"]
+        if status == "missing":
+            state["text"] = (
+                "I need a recorded monthly page first. Ask me to list purchase items for a "
+                "month, then ask for the next page."
+            )
+            return _finish(state, "complete")
+        month = resolution["month"]
+        if status == "exhausted":
+            state["text"] = (
+                f"The saved {month} purchase-items page has no further rows. "
+                f"Refresh {month} to check again."
+            )
+            return _finish(state, "complete")
+        arguments = {"month": month, "limit": resolution["limit"], "cursor": resolution["cursor"]}
+        try:
+            clean, _, _ = prepare_call(settings, "list_purchase_items", arguments)
+        except ValueError, TypeError, KeyError:
+            state["text"] = (
+                f"The saved cursor for {month} is no longer valid. Restart the {month} listing."
+            )
+            return _finish(state, "incomplete", "invalid_cursor")
+        state["tool_calls"] = 1
+        call_id = "0:0"
+        await publish(
+            {
+                "type": "tool",
+                "call_id": call_id,
+                "name": "list_purchase_items",
+                "arguments": clean,
+                "status": "running",
+            }
+        )
+        read = asyncio.create_task(
+            asyncio.to_thread(dispatch_tool, settings, "list_purchase_items", clean)
+        )
+        state["reads"].append(read)
+        result = await asyncio.shield(read)
+        if result["status"] == "error":
+            code = result["data"].get("code")
+            if code == "invalid_cursor":
+                state["text"] = (
+                    f"The saved cursor for {month} is no longer valid. Restart the {month} listing."
+                )
+                return _finish(state, "incomplete", "invalid_cursor")
+            return _finish(state, "incomplete", code)
+        state["evidence"].update({entry["id"]: entry for entry in result["evidence"]})
+        state["results"].append(("list_purchase_items", result))
+        await publish(
+            {
+                "type": "tool",
+                "call_id": call_id,
+                "name": "list_purchase_items",
+                "status": result["status"],
+                "result": result,
+            }
+        )
+        try:
+            answer, refs = render_month_items(result)
+        except ValueError:
+            return _finish(state, "incomplete", "invalid_result")
+        return _rendered(state, (answer, refs, True))
 
     worker = asyncio.create_task(work())
     stop_waiter = asyncio.create_task(stopped.wait())

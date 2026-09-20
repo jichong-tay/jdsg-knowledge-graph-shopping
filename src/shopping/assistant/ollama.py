@@ -22,7 +22,7 @@ def chat_request(settings: Settings, messages: list[dict]) -> dict[str, Any]:
         "think": False,
         "keep_alive": "5m",
         "truncate": False,
-        "options": {"num_ctx": 8192, "num_predict": 768},
+        "options": {"num_ctx": 8192, "num_predict": 768, "temperature": 0},
     }
 
 

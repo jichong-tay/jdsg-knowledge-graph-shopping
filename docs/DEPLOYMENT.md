@@ -16,6 +16,11 @@ and one running web service. This is **not** blue/green deployment. An update st
 the web service briefly while it backs up the database and updates the same checkout.
 That trade-off is appropriate for a personal homelab with fewer than five users.
 
+The Graph page uses the same private loopback service and requires
+`SHOPPING_APP_ORIGIN` to match the exact browser origin. Product Family writes and
+graph reads remain SQLite-backed; no separate graph service or external data store
+is deployed.
+
 ## Two environments
 
 | Environment | Where it runs |
@@ -35,6 +40,12 @@ The repository contains two scripts:
 
 The scripts automate repeatable machine work. This document still explains what
 they change, how private data is protected, and where to look when something fails.
+
+Migration 003 is applied only by the explicit `shopping migrate` step. Before a
+production migration, `deploy-shopping` makes a verified SQLite backup with the
+database backup API, applies the packaged migration, and rolls back code and
+database on a failed health check. The operator database has not been migrated as
+part of ticket 21 verification.
 Tailscale's first HTTPS-consent step and choosing a commit whose CI passed remain
 deliberate human actions.
 
@@ -407,7 +418,8 @@ ticket. Ticket 17 now wires startup interruption recovery into the application l
 The HTTP page, authenticated WebSocket, durable streaming, Stop/Retry, deletion,
 and reconnect are implemented and verified locally. No homelab files or services
 were changed. Continue using the existing green-main deployment, verified backup,
-migration, health check, and rollback process; schema remains at version 2.
+migration, health check, and rollback process. Schema was version 2 at this
+checkpoint; the current ticket 21–22 checkpoint below requires version 3.
 
 Configure `SHOPPING_APP_ORIGIN` as the exact HTTPS origin used through Tailscale
 Serve. Preserve the original Host and Origin through the proxy; arbitrary forwarded
@@ -428,3 +440,24 @@ keyboard dialogs, draft recovery after lost acknowledgements, multi-tab updates,
 slow readers, checkpoint failure, and shutdown/restart. The protected page still
 needs a real Qwen round trip through the deployed Tailscale origin and a disposable
 host rollback/recovery drill. These are pending checks, not evidence of deployment.
+
+### Graph redesign and Chat remediation checkpoint (tickets 21–22)
+
+The current local schema is 3. The authorized development database was backed up
+and migrated directly; purchase and source tables remain unchanged. The Graph page
+uses locally bundled Cytoscape 3.34.3. CI's installed-wheel smoke checks its script,
+license and graph-page reference in addition to migrations 001–003 and existing
+assets. No CDN or new service is required.
+
+Chat now has five bounded read tools, frozen Singapore calendar context, recorded
+monthly pages and saved cursor continuation. Requests retain the selected Qwen
+model, thinking disabled, temperature 0 and the existing runtime budgets. Initial
+authenticated WebSocket state includes the saved library even if a restored
+Conversation is gone. The local model, browser, actual-data and installed-wheel
+checks are recorded in ticket 22. They do not complete ticket 18's host deployment,
+Tailscale inference or rollback verification.
+
+Ticket 23 adds purchase-frequency Product sizing and dated Order neighborhoods to
+the local Graph page, with updated bundled assets. It requires no new migration,
+service or configuration; the current schema remains 3. Its local validation does
+not establish a homelab deployment.

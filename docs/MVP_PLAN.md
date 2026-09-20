@@ -1,21 +1,87 @@
 # Local Shopping Intelligence — MVP Plan
 
-Status: first vertical slice implemented; remaining milestones are planned
+Status: ingestion, Chat and graph foundation implemented locally; host verification and later analytics remain pending
 Target host: Ubuntu, i5-3570K, 16 GB RAM, RTX 3060 12 GB  
 Primary user: one household/user  
 Initial data source: one frequently used online grocery retailer
 
-## 1. MVP outcome
+## 1. Current priority and earlier MVP scope
 
-The immediate MVP is an Ollama-only Shopping Assistant on the existing homelab deployment: open the dedicated Chat page through Tailscale, ask about receipt items and purchase history, and receive answers supported by four application-owned SQLite read tools. Use the agreed durable conversation, streaming, Stop, retry, and reconnect behavior, with a small Python agent loop. The tools are `search_products`, `get_product_history`, `list_recent_orders`, and `get_order`; they include all current receipt items, and the extracted delivery date is used as Purchase date by operator convention.
+The operator clarified that the original goal is a shopping knowledge graph
+and requested data modeling before building more tools. Tickets 20–21 settled and
+implemented entities, relationships, identity, temporal views, and evidence using
+the SQLite schema and authorized inspection of the actual data. The requested
+graph redesign and subsequent Chat repairs in ticket 22 are now complete locally.
+The first intended use is item purchase frequency and future purchase predictions.
+The operator has accepted delivery date as Purchase Date for this analysis; the
+current parser records the start of a scheduled slot, not confirmed arrival.
+Unknown delivery dates stay unknown rather than falling back to order/email dates.
+Product Family is now part of the accepted initial model, above exact Products:
+group the same product type across brands/sizes, keep materially different types
+separate, and review suggested memberships before they affect frequency.
+The operator accepted current
+`placed`/`completed` dated orders up to the analysis date, excluding cancelled,
+refunded, unknown, and future scheduled records from historical frequency. Preserve
+all lines, count one Product occurrence per Order, and use distinct Singapore
+delivery days for intervals. A Family will need the union of its members' qualifying
+occurrences, retaining exact-product details. The
+[graph-model investigation](../.scratch/shopping-assistant/research/shopping-knowledge-graph-model.md)
+and [decision ticket](../.scratch/shopping-assistant/issues/20-define-shopping-knowledge-graph-model.md)
+record these accepted model decisions. The
+[model specification](../.scratch/shopping-assistant/specs/shopping-knowledge-graph-model.md)
+consolidates them; [ticket 21](../.scratch/shopping-assistant/issues/21-build-product-family-foundation.md)
+is the first implementation deliverable. The operator also requested an interactive
+Graph UI in the existing app, making visualization, family review, and purchase
+timelines implemented web outcomes for that ticket. The
+[implementation plan](../.scratch/shopping-assistant/plans/product-family-graph-explorer.md)
+specifies family review persistence and bounded consistent graph reads. The
+[UI redesign](../.scratch/shopping-assistant/plans/graph-ui-redesign.md) supersedes its
+renderer choice with locally bundled Cytoscape. Synthetic browser verification covers the shell, family review,
+selection, race handling, history, responsive layouts, and light/dark themes.
+The operator authorized direct migration of the development database to schema 3;
+a verified backup was retained and purchase facts are unchanged. No deployment was performed. SQLite remains
+authoritative; graph and Markdown artifacts remain derived and rebuildable.
+
+### Earlier Chat milestone — implemented locally, host verification remains separate
+
+The selected Chat MVP is an Ollama-only Shopping Assistant with durable conversations,
+streaming, Stop, retry and reconnect, using one Python agent loop. Five bounded
+read tools are implemented: `search_products`, `get_product_history`,
+`list_recent_orders`, `get_order`, and `list_purchase_items`. They read current
+receipt records; the extracted delivery date is Purchase Date by operator convention.
+Monthly listing retains individual repeated lines and all current statuses, distinct
+from the Graph's qualifying frequency scope. The dedicated Chat page and these
+repairs require separate host verification before they are called deployed.
+
+The operator accepted all four decisions in
+[Define Chat remediation scope and acceptance](../.scratch/shopping-assistant/issues/19-define-chat-remediation-scope-and-acceptance.md).
+Repair the Stop/tool-result race and marker-only completion faults first, then
+Conversation switching, ordinary replies/fallback correctness, and monthly retrieval.
+The [reconciled remediation plan](../.scratch/shopping-assistant/plans/chat-reliability-and-answer-quality.md)
+preserves runtime limits and requires factual/recovery checks, real-model/browser
+verification, and private operator acceptance.
+[Ticket 22](../.scratch/shopping-assistant/issues/22-implement-chat-remediation.md)
+records completed local implementation and verification after ticket 21. Ticket 19 remains the
+resolved decision record; the execution ticket records measured results and limits.
 
 The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [Chat MVP implementation plan](../.scratch/shopping-assistant/plans/chat-mvp.md) and tickets 14–18 define the work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Tickets 14–17 now have local implementations: bounded purchase-history tools, product evidence pages, the native Qwen backend, saved Conversation lifecycle operations, and the protected streaming Chat UI with reconnect and draft recovery. A synthetic local-loop/homelab-model check passed; deployment and host verification of the protected UI remain pending.
 
-The broader roadmap below also describes replenishment predictions, graph relationships, shopping-list writes, and Telegram alerts. Those features are later work and are not prerequisites for the immediate chatbot MVP. Durable purchases remain searchable without generating inappropriate replenishment alerts.
+The graph model and ticket 22's Chat repairs are now implemented locally. The broader roadmap's replenishment predictions, shopping-list writes, and Telegram alerts remain later work. The UI redesign selected locally bundled Cytoscape; forecast algorithms remain separate decisions. Durable purchases remain searchable without generating inappropriate replenishment alerts.
 
 The LLM is not the database and is not the forecasting engine. SQLite is authoritative; Python calculates predictions; the LLM selects tools and explains their results.
 
-Implementation as of 10 August 2026: the Python 3.14 project, migration runner, ingestion schema, exact-byte archive, vendor-adapter boundary, deterministic first-retailer parser, idempotent manual import, current-order FastHTML pages, health endpoint, local Ollama assistant, saved Conversations, protected Chat UI, and local test suite work against irreversibly sanitised fixtures shaped from private samples. GitHub-hosted CI is configured and awaits its first pushed run. Private source emails remain ignored and must never enter the public test suite. A one-time Ubuntu bootstrap script and simple in-place deployment helper are included but have not run on the homelab. Gmail authorization/client/sync code exists, while automatic scheduled Gmail ingestion, analytics, graph generation, Telegram, and off-machine backup remain planned or unverified milestones.
+Implementation as of 21 September 2026 (Singapore): the Python 3.14 project, migration runner,
+ingestion schema, exact-byte archive, deterministic parser, current-order pages,
+health endpoint, local Ollama assistant, saved Conversations, protected Chat UI,
+Product Family persistence/review, protected Cytoscape Graph page, monthly item
+reads with saved pagination, accepted Chat repairs, and local test
+suite work against sanitised fixtures. Graph supports current/history projections,
+selected delivery timelines, and explicit membership review; it does not forecast,
+auto-assign memberships, or add Chat tools. The authorized development database is migrated to schema 3; all purchase facts
+match the pre-migration backup. The Ubuntu bootstrap and in-place deployment helper remain
+unverified on the homelab. Gmail authorization/client/sync code exists, while
+automatic scheduled ingestion, analytics, Telegram, and off-machine backup remain
+planned or unverified.
 
 ```mermaid
 flowchart TB
@@ -692,6 +758,14 @@ CREATE INDEX idx_graph_edges_target
 
 ### Entity rules
 
+The following includes earlier target rules, not a fully implemented graph model.
+The [current investigation](../.scratch/shopping-assistant/research/shopping-knowledge-graph-model.md)
+checks these against the actual ingestion code. In particular, completed-only
+analytics and the old `purchase_history` date fallback are superseded for the
+initial recorded-purchase frequency view by ticket 20's accepted placed/completed,
+delivery-date-only policy. Product Family scope also supersedes the earlier
+exact-product-only analytics target; family membership needs explicit records.
+
 1. A `product` is a canonical SKU-level concept: brand + item + variant + package size. “Meiji Fresh Milk 2L” and “Meiji Fresh Milk 1L” are different products.
 2. A `retailer_product` is the retailer's listing/SKU mapped to that canonical product.
    Its non-null `listing_key` is `sku:<external-sku>` when a SKU exists; otherwise it is a versioned fingerprint of retailer ID + normalized listing name + normalized package size.
@@ -701,14 +775,17 @@ CREATE INDEX idx_graph_edges_target
 6. `orders` identify the retailer order. Parsed facts are append-only `order_revisions` and their `order_items`. `order_revision_sources` preserves every distinct forwarded wrapper that supports the same source event and semantic revision; a later source event remains a new revision even if its business facts return to an earlier state.
 7. Revision and line fingerprints are versioned canonical business facts. A parser upgrade that yields identical facts links its source to the existing revision; it does not create history merely because the parser version changed.
 8. The original retailer message timestamp (`source_event_at`) selects the current revision, so delayed forwarding cannot replace newer facts with an older confirmation. Revision-kind precedence breaks an exact timestamp tie; an ambiguous same/lower-precedence tie enters review. Existing revisions are never rewritten or deleted.
-9. Downstream metrics read only the current completed revision. If the current revision changes, derived metrics, predictions, alerts, shopping-list matches, and graph projections are invalidated/recomputed; historical references remain valid because old item rows still exist.
+9. Earlier target: downstream metrics read only the current completed revision. Ticket 20 supersedes this for recorded-purchase frequency: use current placed/completed revisions with known delivery dates up to the analysis date; exclude cancelled/refunded/unknown and future scheduled dates. Factual graph views retain all statuses. If the current revision changes, derived metrics, predictions, alerts, shopping-list matches, and graph projections are invalidated/recomputed; historical references remain valid because old item rows still exist.
 10. Derived tables (`product_metrics`, `replenishment_cycles`, `replenishment_predictions`, `co_purchase_edges`, `graph_nodes`, `graph_edges`) are rebuildable from factual tables.
 
 ### Migration and backup protocol
 
 - `src/shopping/storage/migrations/001_ingestion.sql` contains only the migration ledger, email sync/messages, retailers, brands, categories, products, retailer products/aliases, orders, revisions/source associations, and items required for the first vertical slice.
 - `src/shopping/storage/migrations/002_conversations.sql` implements the Conversation tables shown above, including attempts, bounded tool records, command outcomes, and content-free creation/deletion fences. Submitted messages are immutable; deleting a Conversation cascades only through its messages, attempts and tools. Command fingerprints/outcomes are scrubbed to a minimal gone result on deletion.
-- Analytics, notification, and graph tables remain targets for later numbered migrations.
+- Migration 003 (`003_product_families.sql`) implements Product Family definitions,
+  append-only membership proposals/reviews, command replay outcomes, and graph
+  dataset identity/generation. SQLite remains authoritative; graph records and
+  delivery timelines are rebuildable projections.
 - Each migration has a recorded SHA-256 checksum and dirty/in-progress state. Only one migration process may run at a time.
 - Deployment runs the migration one-shot synchronously before starting the web
   service. Web and future timer commands verify that the schema is current and
@@ -717,6 +794,11 @@ CREATE INDEX idx_graph_edges_target
 - A restore test must confirm the backup's schema version, raw-email references, and ability to reparse before it is considered valid.
 
 ### Initial graph predicates
+
+These are earlier roadmap examples, not implemented graph behavior. The accepted
+model uses explicit Revision, Item, Listing, Product Family, and Source nodes
+before any Order → Product convenience edge, so repeated lines and provenance are
+preserved. Derived/inferred predicates below require separate evidence policies.
 
 | Predicate | Example | Provenance |
 |---|---|---|
@@ -733,13 +815,33 @@ Every inferred edge must carry a confidence and evidence. The chatbot must ident
 
 ## 5. Baseline prediction algorithm
 
-The MVP predicts exact canonical products, not broad categories. Category-level forecasting comes later.
+This is an earlier, unimplemented algorithm proposal. The graph-model discussion
+has now settled the first purpose, date basis, Product Family scope, and eligibility/
+counting rules: item frequency and predictions use delivery date as Purchase Date,
+with scheduled versus actual delivery clearly distinguished. Current `placed` and
+`completed` orders with known past/current delivery dates qualify; preserve line
+facts and aggregate intervals by distinct delivery day. The threshold, score,
+window, and alert policy below still need review. All 15 orders in the inspected
+database are `placed`; the earlier completed-only rule is superseded for this view.
+The [current proposal](../.scratch/shopping-assistant/research/shopping-knowledge-graph-model.md#purchase-dates-frequency-and-predictions)
+separates a recorded-purchase series from proof of fulfillment or consumption.
+
+The proposed baseline predicts the next delivery-based Purchase Date for a Product
+or Product Family. Actual family memberships must be reviewed and their unioned
+history computed before family forecasts. It does not predict inventory exhaustion or the date to place
+an order; those require consumption or lead-time information. Broad Category-level
+forecasting remains later work; Product Family is initial scope. Current product
+identities remain provisional.
 
 Eligibility:
 
-- At least five completed purchase events, which provides at least four positive intervals after same-day collapse.
-- Ignore cancelled/refunded orders.
-- Use delivery/receipt time when available and fall back to order time.
+- Candidate forecast threshold: at least five qualifying purchase days, providing
+  at least four positive intervals. This threshold is not accepted yet.
+- Accepted history eligibility: current `placed` or `completed` orders; exclude
+  cancelled/refunded/unknown. This is recorded purchase activity, not certified fulfillment.
+- Use delivery date only, in Asia/Singapore local calendar days. Missing dates
+  remain unknown; do not fall back to order/email dates. Future scheduled dates
+  are upcoming orders, not elapsed purchase intervals.
 - Collapse multiple purchases of the same product on the same local calendar day into one event.
 - Require median interval `m > 0`; otherwise the product remains ineligible.
 
@@ -754,6 +856,12 @@ For each eligible product:
 7. Set `due_score = clamp((days_since_last - (m - tolerance)) / (2 × tolerance), 0, 1)`.
 8. Set `confidence = min(1, interval_count / 6) × (1 / (1 + mad / m))`.
 
+This proposed `confidence` is a heuristic score, not a calibrated probability,
+and the tolerance window is not a validated prediction interval. Evaluate any
+chosen baseline on successive held-out future purchases before presenting an
+accuracy claim. See [rolling-origin evaluation](https://otexts.com/fpp3/tscv.html)
+and [prediction intervals](https://otexts.com/fpp3/prediction-intervals.html).
+
 Open one replenishment cycle per `(product, last_purchase_order_item, algorithm_version)`. Daily recalculation may append a new prediction row, but only one prediction is current for that cycle. Send `due_soon` when the current prediction first crosses `due_score >= 0.75` with `confidence >= 0.55`, or when an explicitly defined escalation threshold is crossed.
 
 Use the lifecycle dedupe key:
@@ -766,9 +874,14 @@ Resolve the cycle when a later completed current order revision contains the pro
 
 This is deliberately a transparent statistical baseline. Quantity-aware depletion, category/package-size rollups, and substitutions remain deferred but must be stated as limitations in the UI. Store algorithm versions and prediction history, then run walk-forward backtests so a later approach can be measured against it.
 
+Product Family frequency is now initial scope; the earlier cycle schema and
+item-keyed alert rules above have not yet been redesigned for it. Family dates
+must be unioned across members rather than adding member counts, and family
+quantities must not be normalized without validated package/unit conversions.
+
 ## 6. Chatbot design
 
-### Immediate read-only MVP — accepted design, not implemented
+### Immediate read-only MVP — local implementation
 
 Use the accepted [runtime contract](../.scratch/shopping-assistant/issues/06-define-agent-runtime.md):
 one application-owned Python loop and one small Ollama adapter. The adapter reports
@@ -776,8 +889,20 @@ text deltas, complete correlated tool proposals, provider end/failure, and optio
 usage; the loop owns tool execution, budgets, context, evidence, and completion.
 Do not let the model execute SQL or arbitrary Python.
 
-The four tools are `search_products`, `get_product_history`, `list_recent_orders`,
-and `get_order`. No write, analytics, or graph tools are part of this MVP.
+The five implemented tools are `search_products`, `get_product_history`,
+`list_recent_orders`, `get_order`, and
+`list_purchase_items(month="YYYY-MM", limit=10, cursor=...)`, capped at 20 whole
+rows and the existing 4 KiB envelope. The runtime freezes
+Singapore calendar context once per Response Attempt and use current revisions'
+delivery dates as Purchase Dates, including `placed` records and repeated lines.
+Unknown dates remain unknown. Monthly pages are rendered deterministically and
+preserve the resolved month/limit on continuation, including across calendar rollover
+and reconnect. Explicit next-page requests derive their anchor from saved complete
+tool groups before model context trimming, execute one fresh bounded read, and
+need no model generation. Expired cursors request a restart of the original month;
+they never silently switch months or restart the first page. Existing cursor expiry
+and live-pagination limits remain. No write, analytics, or graph
+tools are part of this MVP.
 
 | Runtime boundary | Accepted initial setting |
 |---|---|
@@ -785,6 +910,7 @@ and `get_order`. No write, analytics, or graph tools are part of this MVP.
 | Attempt work deadline | 180 seconds, including model loading |
 | Model/tool limits | 4 model requests and 8 proposed tool calls per attempt, including corrections, invalid proposals, repeated calls, and pagination |
 | Model output | 768 generated tokens maximum per request |
+| Sampling | Temperature 0 with explicit response-mode guidance; factual rendering still validates records |
 | Context budget | 8,192 total: 6,912 input + 768 output + 512 safety headroom |
 | Reduced-context evaluation | 4,096 total: 2,816 input + 768 output + 512 safety headroom |
 | Submitted message | 4,000 characters maximum; reject oversized input without silently shortening it |
@@ -814,12 +940,23 @@ evidence links in the application. Clean provider completion, no pending tools, 
 valid required evidence references are necessary for completion, but cannot prove
 every sentence is correct; the fixed evaluation set must test semantic grounding.
 Cut-off output, exhausted limits, and invalid references remain incomplete.
-When a provider response lacks a valid evidence marker after successful fresh tool
-reads, the generated prose is discarded and the application may produce a clearly
-labelled recorded-results summary from those structured fields, with only
-application-owned evidence markers. It never aggregates pages, selects among
-candidates, or repairs failed/cancelled/deadline attempts. Context preparation
-failures are surfaced as a distinct retryable notice; no automatic replay occurs.
+After valid fresh tool reads, application-owned rendering supplies the recorded
+answer, preserving available requested fields and actual evidence links. Conservative
+lookup-intent checks leave unsupported or uncertain requests incomplete while
+retaining useful records. Empty current product history is stated explicitly;
+partial pages and ambiguous product candidates retain their meaning. This does
+not establish complete natural-language understanding or aggregate partial pages.
+
+Ordinary greetings, thanks, help, clarification and unsupported explanations use
+validated response modes with fixed application wording and need no purchase
+Evidence. Native structured-output probes were inconsistent, so the existing marker
+contract remains. A narrow capability-help request has a fixed safe response if
+the model omits its marker. Empty marker-only responses fail their own attempt;
+they cannot fault the whole service. Mixed purchase requests require fresh reads.
+Stop persists only durable text/Evidence, and failed Conversation switching preserves
+the previous browser selection and server subscription. Context failures remain
+distinct from provider outages. Factual, recovery, browser and real-model checks
+are recorded under ticket 22; there are no hidden repair generations.
 
 No automatic model/database replay or hidden final-answer repair is allowed. Preserve
 partial output and offer explicit Retry under the accepted lifecycle. Browser
@@ -846,14 +983,14 @@ and application-owned evidence links; operational logs exclude conversation cont
 The operator is learning Python and systems thinking: use small ordinary functions,
 explicit state transitions, one active async response task, and existing library
 facilities. Do not turn these safety rules into a generic messaging/RPC framework,
-broker, distributed coordinator, or token event-replay store. Ticket 09 will define
-short vertical slices and a compact acceptance checklist. Implementation remains
-paused until Wayfinder planning is complete.
+broker, distributed coordinator, or token event-replay store. Ticket 09 defines
+short vertical slices and a compact acceptance checklist. Remediation planning is
+accepted in ticket 19; ticket 22 execution is resolved locally after ticket 21.
 
 ### Later roadmap — not immediate MVP scope
 
 The broader tools, write policy, and screens below are retained for future work.
-They do not expand the accepted four-tool runtime above.
+They do not expand the accepted five-tool target above.
 
 Future read tools:
 
@@ -902,13 +1039,28 @@ The later roadmap envisions five screens:
 2. **Chat** — streamed conversation with visible tool activity.
 3. **Purchase history** — orders, products, quantities, and price history.
 4. **Review queue** — failed parses and provisional product matches.
-5. **Graph** — app-owned neighborhood explorer plus a link to the latest Graphify HTML artifact.
+5. **Graph** — required app-owned interactive explorer at `/graph` in ticket 21:
+   Family/Product search, typed connections, pan/zoom/reset, bounded expansion,
+   an inline details/evidence panel, membership review, and delivery-based purchase
+   timelines. Use the existing sidebar/themes and support mobile plus keyboard/list
+   exploration. Graphify artifact linking remains a separate optional experiment.
+
+   Ticket 23 adds Product circle sizing by qualifying distinct Order count and
+   single-activation Product-to-Order neighborhoods with scheduled delivery dates.
+   `PURCHASED_IN` is a bounded derived convenience edge supported by existing
+   current Revision/Item records; it adds no database facts or migration. The
+   detailed factual evidence paths and earlier-revision mode remain available.
+   Counts are independent of graph pages and node visibility. Desktop uses a
+   dated two-column neighborhood; mobile uses a scrollable vertical layout.
 
 Use FastHTML for HTML pages/fragments and the WebSocket chat route. Mount FastAPI at `/api` for JSON endpoints such as `/api/health`, `/api/orders`, `/api/predictions`, and `/api/import/status`. Both layers call the same services and repositories.
 
 ## 7. Graphify in version one
 
 Graphify is an optional projection, not a dependency in the ingestion/chat/alert path.
+The required Graph UI consumes the application's own graph records and works
+without Graphify. A static export or Graphify artifact alone does not satisfy
+ticket 21's interactive visualization requirement.
 
 The application exports selected nodes as Markdown:
 

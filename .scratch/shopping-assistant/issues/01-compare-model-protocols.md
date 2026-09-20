@@ -20,7 +20,8 @@ Research completed and the committed report was inspected. Native Ollama and Cha
 - Malformed streams, in-stream errors, and premature EOF must remain incomplete failures.
 - A Chat Completions-compatible endpoint does not imply Responses API compatibility.
 
-Report: [Ollama and OpenAI-compatible model protocols](/tmp/jdsg-research-model-protocols/docs/research/shopping-assistant-model-protocols.md).
+The report was inspected from a temporary research worktree; its durable branch,
+commit, and repository path are recorded below.
 
 Durable context pointer: branch `research/shopping-assistant-model-protocols`, commit `326023be9d6494ce62271974299e3014055bf65d`, repository path `docs/research/shopping-assistant-model-protocols.md`. Retrieve with `git show 326023be9d6494ce62271974299e3014055bf65d:docs/research/shopping-assistant-model-protocols.md` if the temporary worktree is removed.
 

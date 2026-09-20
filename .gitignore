@@ -17,7 +17,7 @@ htmlcov/
 
 # Private/generated application data
 data/
-knowledge/
+/knowledge/
 graphify-out/
 *.sqlite3
 *.sqlite3-journal

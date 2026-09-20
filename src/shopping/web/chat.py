@@ -258,6 +258,9 @@ async def _socket(state: dict, socket: WebSocket) -> None:
         _rate(state, session)
         peer["authenticated"] = True
         _queue(peer, {"type": "ready", "id": first["id"], "availability": _availability(state)})
+        # Hydrate the library independently so a stale restored selection cannot
+        # hide other saved conversations behind a failed subscribe.
+        await _library(state, peer)
 
         async def read_commands():
             while True:
@@ -400,9 +403,14 @@ async def _command(state: dict, peer: dict, command: dict) -> None:
                     _queue(peer, {"type": "draft", "conversation_id": cid, "id": command["id"]})
                 else:
                     _command_id(cid)
-                    # Register before reading the snapshot under the same writer lock.
+                    previous = peer["conversation_id"]
+                    try:
+                        await _snapshot(state, peer, cid, request_id=command["id"])
+                    except Exception:
+                        # Keep the current valid subscription when a requested target is stale.
+                        peer["conversation_id"] = previous
+                        raise
                     peer["conversation_id"] = cid
-                    await _snapshot(state, peer, cid, request_id=command["id"])
                 await _library(state, peer)
             elif kind == "snapshot":
                 cid = command["conversation_id"]
@@ -593,6 +601,11 @@ async def _run(state: dict, active: dict):
                     if attempt["status"] == "stopping":
                         status = "stopping" if state["faulted"] else "stopped"
                         text = attempt["text"]
+                        # Stop is authoritative: only evidence already recorded by
+                        # record_tool may accompany the durable stopped attempt.
+                        evidence = list(attempt.get("evidence", []))
+                    else:
+                        evidence = result.get("evidence", [])
                     attempt = await asyncio.to_thread(
                         saved.checkpoint,
                         settings,
@@ -602,7 +615,7 @@ async def _run(state: dict, active: dict):
                         text=text,
                         status=status,
                         code=result.get("code"),
-                        evidence=result.get("evidence", []),
+                        evidence=evidence,
                     )
                     await _publish(state, cid, attempt)
     except Exception, asyncio.CancelledError:

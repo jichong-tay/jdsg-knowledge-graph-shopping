@@ -1,0 +1,21 @@
+(async () => {
+  const q = s => document.querySelector(s), all = s => [...document.querySelectorAll(s)];
+  const assert = (ok, message) => { if (!ok) throw Error(message); };
+  const wait = async (fn, label) => { const end = Date.now() + 8000; while (Date.now() < end) { if (fn()) return; await new Promise(r => setTimeout(r, 25)); } throw Error(`Timed out: ${label}`); };
+  await wait(() => q('#chat-library') && q('#chat-library').children.length >= 2, 'library');
+  const rows = all('#chat-library .conversation-row');
+  const rowA = rows.find(row => row.textContent.includes('Conversation A'));
+  const rowB = rows.find(row => row.textContent.includes('Conversation B'));
+  assert(rowA && rowB, 'Seed conversations missing');
+  rowA.click(); await wait(() => q('#chat-title')?.textContent === 'Conversation A', 'select A');
+  const input = q('#chat-message'); input.value = 'Draft kept while switching'; input.dispatchEvent(new Event('input', {bubbles: true}));
+  assert((await fetch('/test/remove-b', {method: 'POST'})).ok, 'Synthetic B removal failed');
+  rowB.click(); await wait(() => !all('#chat-library .conversation-row').some(row => row.textContent.includes('Conversation B')), 'remove stale B');
+  assert(q('#chat-title').textContent === 'Conversation A' && input.value === 'Draft kept while switching', 'A state was lost');
+  q('#chat-rename').click(); await wait(() => q('dialog input'), 'rename dialog');
+  q('dialog input').value = 'A renamed'; q('dialog button').click(); await wait(() => q('#chat-title').textContent === 'A renamed', 'A update');
+  q('#chat-new').click(); await wait(() => q('#chat-title').textContent === 'New conversation', 'new draft');
+  input.value = 'New synthetic question'; input.dispatchEvent(new Event('input', {bubbles: true})); q('#chat-composer').dispatchEvent(new Event('submit', {cancelable: true, bubbles: true}));
+  await wait(() => q('#chat-transcript')?.textContent.includes('Synthetic answer'), 'new send');
+  return {passed: true, selectedAAfterStaleB: true, draftPreserved: true, renameUpdate: true, newConversationSend: true};
+})();

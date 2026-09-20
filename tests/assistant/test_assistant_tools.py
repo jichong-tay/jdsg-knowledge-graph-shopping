@@ -85,6 +85,140 @@ def collect_pages(settings, tool, arguments):
         assert len(cursors) < 100
 
 
+def test_list_purchase_items_month_pagination_and_envelope(purchase_facts):
+    from shopping.assistant.tools import MAX_RESULT_BYTES, encode_result
+
+    first = dispatch_tool(purchase_facts, "list_purchase_items", {"month": "2026-01", "limit": 10})
+    assert first["status"] == "ok"
+    assert first["data"]["month"] == "2026-01"
+    assert first["data"]["timezone"] == "Asia/Singapore"
+    assert first["data"]["limit"] == 10
+    assert len(encode_result(first).encode()) <= MAX_RESULT_BYTES
+    rows = list(first["data"]["items"])
+    cursor = first["next_cursor"]
+    assert cursor
+    second = dispatch_tool(
+        purchase_facts,
+        "list_purchase_items",
+        {"month": "2026-01", "limit": 10, "cursor": cursor},
+    )
+    assert second["status"] == "ok"
+    rows.extend(second["data"]["items"])
+    assert len({row["order_item_id"] for row in rows}) == len(rows)
+    assert all(row["purchase_date"].startswith("2026-01") for row in rows)
+    assert (
+        dispatch_tool(
+            purchase_facts,
+            "list_purchase_items",
+            {"month": "2026-02", "limit": 10, "cursor": cursor},
+        )["data"]["code"]
+        == "invalid_cursor"
+    )
+
+
+def test_list_purchase_items_strict_month_and_empty_result(settings):
+    for args in (
+        {"month": "2026-1"},
+        {"month": "2026-01", "limit": 21},
+        {"month": "2026-01", "extra": 1},
+    ):
+        assert dispatch_tool(settings, "list_purchase_items", args)["data"]["code"] == (
+            "invalid_arguments"
+        )
+    empty = dispatch_tool(settings, "list_purchase_items", {"month": "2030-01"})
+    assert empty["status"] == "ok" and empty["data"]["items"] == []
+
+
+def test_list_purchase_items_all_pages_match_independent_expected_ids(monthly_purchase_facts):
+    from shopping.assistant.tools import dispatch_tool
+
+    expected = [
+        2002,
+        1022,
+        1020,
+        1018,
+        1016,
+        1014,
+        1012,
+        1010,
+        1008,
+        1006,
+        1004,
+        1002,
+        1000,
+        1001,
+        2001,
+    ]
+    actual = []
+    arguments = {"month": "2026-08", "limit": 10}
+    while True:
+        page = dispatch_tool(monthly_purchase_facts, "list_purchase_items", arguments)
+        assert page["status"] == "ok"
+        actual.extend(row["order_item_id"] for row in page["data"]["items"])
+        if page["next_cursor"] is None:
+            break
+        arguments = {**arguments, "cursor": page["next_cursor"]}
+    assert actual == expected
+    assert not {2000, 2003, 2004, 2005} & set(actual)
+    assert len(actual) > 8
+
+
+def test_list_purchase_items_cursor_binds_limit_database_and_restart(
+    monkeypatch, monthly_purchase_facts, tmp_path
+):
+    from dataclasses import replace
+
+    from shopping.assistant import tools
+
+    first = tools.dispatch_tool(
+        monthly_purchase_facts, "list_purchase_items", {"month": "2026-08", "limit": 10}
+    )
+    cursor = first["next_cursor"]
+    assert cursor
+    assert (
+        tools.dispatch_tool(
+            monthly_purchase_facts,
+            "list_purchase_items",
+            {"month": "2026-08", "limit": 5, "cursor": cursor},
+        )["data"]["code"]
+        == "invalid_cursor"
+    )
+    other = replace(monthly_purchase_facts, database_path=tmp_path / "other.sqlite3")
+    assert (
+        tools.dispatch_tool(
+            other,
+            "list_purchase_items",
+            {"month": "2026-08", "limit": 10, "cursor": cursor},
+        )["data"]["code"]
+        == "invalid_cursor"
+    )
+    monkeypatch.setattr(tools, "_CURSOR_KEY", b"restart" * 8)
+    assert (
+        tools.dispatch_tool(
+            monthly_purchase_facts,
+            "list_purchase_items",
+            {"month": "2026-08", "limit": 10, "cursor": cursor},
+        )["data"]["code"]
+        == "invalid_cursor"
+    )
+
+
+def test_list_purchase_items_oversized_row_is_bounded(monthly_purchase_facts):
+    import sqlite3
+
+    from shopping.assistant.tools import encode_result
+
+    with sqlite3.connect(monthly_purchase_facts.database_path) as connection:
+        connection.execute("UPDATE products SET canonical_name=? WHERE id=1", ("X" * 5000,))
+        connection.commit()
+    result = dispatch_tool(
+        monthly_purchase_facts, "list_purchase_items", {"month": "2026-08", "limit": 20}
+    )
+    assert result["status"] == "error"
+    assert result["data"]["code"] == "size_limit"
+    assert len(encode_result(result).encode("utf-8")) <= 4096
+
+
 def test_strict_validation_precedes_storage_access(settings):
     import pytest
 
@@ -234,7 +368,7 @@ def test_storage_failure_is_not_empty_history(settings):
     }
 
 
-def test_schemas_expose_exactly_four_strict_tools():
+def test_schemas_expose_exactly_five_strict_tools():
     from shopping.assistant.tools import tool_schemas, validate_arguments
 
     schemas = tool_schemas()
@@ -243,6 +377,7 @@ def test_schemas_expose_exactly_four_strict_tools():
         "get_product_history",
         "list_recent_orders",
         "get_order",
+        "list_purchase_items",
     ]
     for schema in schemas:
         assert schema["function"]["parameters"]["additionalProperties"] is False

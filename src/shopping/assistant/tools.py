@@ -13,6 +13,7 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
+from shopping.assistant.dates import month_bounds
 from shopping.config import Settings
 from shopping.purchases.queries import read_page
 from shopping.storage.schema import assert_schema_current
@@ -26,6 +27,7 @@ _LIMITS = {
     "list_recent_orders": (10, 25),
     "get_order": (50, 50),
 }
+_LIMITS["list_purchase_items"] = (10, 20)
 
 
 def tool_schemas() -> list[dict[str, Any]]:
@@ -33,7 +35,12 @@ def tool_schemas() -> list[dict[str, Any]]:
     schemas = []
     for name, (default, maximum) in _LIMITS.items():
         properties: dict[str, Any] = {
-            "cursor": {"type": "string", "minLength": 1, "maxLength": 512},
+            "cursor": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Omit for the first page; otherwise use the exact returned cursor.",
+            },
         }
         required = []
         if name != "get_order":
@@ -50,14 +57,33 @@ def tool_schemas() -> list[dict[str, Any]]:
             field = "product_id" if name == "get_product_history" else "order_id"
             properties[field] = {"type": "integer", "minimum": 1, "maximum": _MAX_ID}
             required = [field]
+        elif name == "list_purchase_items":
+            properties["month"] = {
+                "type": "string",
+                "pattern": r"^\d{4}-(0[1-9]|1[0-2])$",
+                "minLength": 7,
+                "maxLength": 7,
+            }
+            required = ["month"]
+        description = {
+            "search_products": "Find product candidates by name.",
+            "get_product_history": "Read current purchase history for one product.",
+            "list_recent_orders": "Read the most recent current orders.",
+            "get_order": "Read one current order and its line items.",
+            "list_purchase_items": (
+                "List one page of recorded current purchase items for a calendar month; "
+                "use limit 10 by default and at most 20 rows, then follow the exact returned "
+                "cursor for another page."
+            ),
+        }[name]
         schemas.append(
             {
                 "type": "function",
                 "function": {
                     "name": name,
-                    "description": "Read current purchase facts. Purchase date is delivery_at; "
-                    "missing dates stay unknown. Follow next_cursor for more rows. "
-                    "Multiple search matches are candidates, not a selected identity.",
+                    "description": description
+                    + " Purchase date is delivery_at; missing dates stay unknown. "
+                    "Follow next_cursor for more rows.",
                     "parameters": {
                         "type": "object",
                         "properties": properties,
@@ -103,6 +129,8 @@ def validate_arguments(name: str, arguments: Mapping[str, Any]) -> dict[str, Any
                 clean[field] = value
             if not rule["minLength"] <= len(value) <= rule["maxLength"]:
                 raise ValueError("invalid_arguments")
+    if name == "list_purchase_items":
+        month_bounds(clean["month"])
     return clean
 
 

@@ -42,6 +42,7 @@ _NAV_ITEMS = (
     ("/", "Overview", "layout-dashboard"),
     ("/orders", "Orders", "shopping-basket"),
     ("/chat", "Chat", "messages-square"),
+    ("/graph", "Graph", "network"),
     ("/system", "System", "activity"),
 )
 
@@ -150,7 +151,7 @@ def document(
             Link(rel="icon", href="data:,"),
             Script(_THEME_BOOTSTRAP),
             *_ASSETS.headers(include_meta=False),
-            Link(rel="stylesheet", href="/static/shopping.css"),
+            Link(rel="stylesheet", href="/static/shopping.css?v=20260922"),
         ),
         Body(
             A("Skip to content", href="#page-content", cls="skip-link"),
@@ -170,6 +171,8 @@ def document(
             Div(id="app-live-region", cls="sr-only", aria_live="polite", aria_atomic="true"),
             *_ASSETS.footers(),
             Script(src="/static/shopping.js"),
+            Script(src="/static/vendor/cytoscape-3.34.3.min.js?v=20260920", defer=True),
+            Script(src="/static/graph.js?v=20260922", defer=True),
             Script(src="/static/chat.js", defer=True) if current_path == "/chat" else None,
         ),
         lang="en",

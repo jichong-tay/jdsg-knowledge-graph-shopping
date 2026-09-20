@@ -14,6 +14,7 @@ from shopping.config import Settings
 from shopping.storage.runtime import assert_supported_runtime
 from shopping.storage.schema import assert_schema_current
 from shopping.web.chat import register_chat
+from shopping.web.graph import register_graph
 from shopping.web.health import register_health
 from shopping.web.layout import register_assets
 from shopping.web.orders import register_orders
@@ -49,6 +50,7 @@ def create_app(settings: Settings, *, chat_runner=run_attempt):
     )
     register_assets(app)
     register_chat(app, settings, runner=chat_runner)
+    register_graph(app, settings)
 
     register_overview(app, settings, runtime)
     register_orders(app, settings)

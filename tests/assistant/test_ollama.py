@@ -55,8 +55,14 @@ def test_native_stream_assembles_tools_and_sets_required_options(settings):
     assert request["think"] is False
     assert request["truncate"] is False
     assert request["keep_alive"] == "5m"
-    assert request["options"] == {"num_ctx": 8192, "num_predict": 768}
-    assert len(request["tools"]) == 4
+    assert request["options"] == {"num_ctx": 8192, "num_predict": 768, "temperature": 0}
+    assert {tool["function"]["name"] for tool in request["tools"]} == {
+        "search_products",
+        "get_product_history",
+        "list_recent_orders",
+        "get_order",
+        "list_purchase_items",
+    }
 
 
 class ChunkStream(httpx.AsyncByteStream):

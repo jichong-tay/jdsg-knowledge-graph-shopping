@@ -94,7 +94,10 @@ def test_send_is_saved_before_generation_and_retransmission_does_not_repeat(sett
             "An unsupported claim about your purchases.",
             "Here are the recorded details from this lookup:",
         ),
-        ("The recorded total is SGD 14.00. [[order:1]]", "The recorded total is SGD 14.00."),
+        (
+            "The recorded total is SGD 14.00. [[order:1]]",
+            "Here are the recorded details from this lookup:",
+        ),
     ],
 )
 def test_real_runtime_tool_answer_is_saved_and_restored(
@@ -238,6 +241,194 @@ def test_disconnect_continues_and_stop_retry_targets_saved_attempt(settings):
             assert receive(resumed, "ack")["outcome"]["status"] == "gone"
 
 
+def test_stop_during_controlled_tool_return_saves_only_durable_evidence_and_recovers(settings):
+    import asyncio
+    import threading
+
+    tool_returned = threading.Event()
+    release = threading.Event()
+
+    async def controlled(settings, question, *, emit, stop, **kwargs):
+        await emit({"type": "status", "status": "generating"})
+        tool_returned.set()
+        await asyncio.to_thread(release.wait)
+        if stop.is_set():
+            return {
+                "status": "incomplete",
+                "code": "cancelled",
+                "text": "",
+                "evidence": [{"id": "order:1"}],
+            }
+        return {"status": "complete", "code": None, "text": "Done", "evidence": []}
+
+    with TestClient(
+        create_app(replace(settings, app_origin=ORIGIN), chat_runner=controlled), base_url=ORIGIN
+    ) as client:
+        with connect(client) as socket:
+            initialize(client, socket)
+            cid = draft(socket)
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "submit",
+                    "id": "race-send",
+                    "conversation_id": cid,
+                    "text": "Wait",
+                }
+            )
+            aid = receive(socket, "ack")["outcome"]["attempt_id"]
+            assert tool_returned.wait(2)
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "stop",
+                    "id": "race-stop",
+                    "conversation_id": cid,
+                    "attempt_id": aid,
+                }
+            )
+            assert receive(socket, "ack")["outcome"]["status"] == "stopping"
+            release.set()
+            stopped = receive(socket, "update", status="stopped")["attempt"]
+            assert stopped["evidence"] == []
+            assert receive(socket, "availability")["availability"] == "available"
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "submit",
+                    "id": "recovery",
+                    "conversation_id": cid,
+                    "text": "Again",
+                }
+            )
+            new_attempt = receive(socket, "ack")["outcome"]["attempt_id"]
+            assert receive(socket, "update", status="complete")["attempt"]["id"] == new_attempt
+
+
+@pytest.mark.parametrize("marker", ["[[clarification]]", "[[unsupported]]"])
+def test_marker_only_runtime_is_saved_failed_and_next_attempt_completes(settings, marker):
+    from functools import partial
+
+    from shopping.assistant.runtime import run_attempt
+
+    calls = 0
+
+    async def stream(settings, messages):
+        nonlocal calls
+        calls += 1
+        yield {"type": "text", "text": marker if calls == 1 else "[[clarification]] Which product?"}
+        yield {"type": "end", "prompt_tokens": 100}
+
+    async def count(messages):
+        return 100
+
+    runner = partial(run_attempt, stream=stream, count_input=count)
+    with TestClient(
+        create_app(replace(settings, app_origin=ORIGIN), chat_runner=runner), base_url=ORIGIN
+    ) as client:
+        with connect(client) as socket:
+            initialize(client, socket)
+            cid = draft(socket)
+            socket.send_json(
+                {"v": 1, "type": "submit", "id": "marker", "conversation_id": cid, "text": "Help"}
+            )
+            first = receive(socket, "ack")["outcome"]["attempt_id"]
+            failed = receive(socket, "update", status="failed")["attempt"]
+            assert (
+                failed["id"] == first and failed["code"] == "empty_response" and not failed["text"]
+            )
+            assert saved.get_attempt(settings, cid, first)["status"] == "failed"
+            assert receive(socket, "availability")["availability"] == "available"
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "submit",
+                    "id": "marker-next",
+                    "conversation_id": cid,
+                    "text": "Again",
+                }
+            )
+            second = receive(socket, "ack")["outcome"]["attempt_id"]
+            complete = receive(socket, "update", status="complete")["attempt"]
+            assert complete["id"] == second and complete["text"].strip()
+            assert saved.get_attempt(settings, cid, first)["status"] == "failed"
+
+
+def test_failed_stale_subscription_keeps_a_updates_on_same_peer(settings):
+    async def answer(settings, question, *, emit, **kwargs):
+        await emit({"type": "text", "text": "Saved answer"})
+        return {"status": "complete", "code": None, "text": "Saved answer", "evidence": []}
+
+    with TestClient(
+        create_app(replace(settings, app_origin=ORIGIN), chat_runner=answer), base_url=ORIGIN
+    ) as client:
+        with connect(client) as socket:
+            initialize(client, socket)
+            a = draft(socket)
+            socket.send_json(
+                {"v": 1, "type": "submit", "id": "a-send", "conversation_id": a, "text": "A"}
+            )
+            receive(socket, "ack")
+            receive(socket, "update", status="complete")
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "subscribe",
+                    "id": "stale-b",
+                    "conversation_id": "missing-conversation",
+                }
+            )
+            assert receive(socket, "error")["code"] == "gone"
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "rename",
+                    "id": "a-rename",
+                    "conversation_id": a,
+                    "text": "A updated",
+                }
+            )
+            assert receive(socket, "ack")["outcome"]["status"] == "renamed"
+            update = receive(socket, "update")
+            assert update["conversation"]["id"] == a
+
+
+def test_initial_stale_restore_still_hydrates_saved_library(settings):
+    def seed(label):
+        cid = saved.new_draft(settings)
+        accepted = saved.accept_command(
+            settings, {"kind": "submit", "id": label, "conversation_id": cid, "text": label}
+        )
+        attempt = saved.get_attempt(settings, cid, accepted["attempt_id"])
+        saved.checkpoint(
+            settings,
+            cid,
+            attempt["id"],
+            expected_version=attempt["version"],
+            text="Saved",
+            status="complete",
+        )
+        return cid
+
+    first = seed("first")
+    second = seed("second")
+    with TestClient(create_app(replace(settings, app_origin=ORIGIN)), base_url=ORIGIN) as client:
+        with connect(client) as socket:
+            initialize(client, socket)
+            library = receive(socket, "library")
+            ids = {item["id"] for item in library["items"]}
+            assert first in ids and second in ids
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "subscribe",
+                    "id": "stale-restore",
+                    "conversation_id": "gone-conversation",
+                }
+            )
+            assert receive(socket, "error")["code"] == "gone"
+
+
 def test_persistence_failure_stops_generation_without_broadcasting_unsaved_text(settings):
     from contextlib import closing
 
@@ -285,6 +476,7 @@ def test_restart_recovers_partial_attempt_without_rerunning_and_can_rename(setti
     ) as client:
         with connect(client) as socket:
             initialize(client, socket)
+            receive(socket, "library")
             socket.send_json({"v": 1, "type": "subscribe", "id": "resume", "conversation_id": cid})
             snapshot = receive(socket, "snapshot")
             assert snapshot["items"][0]["status"] == "interrupted"
@@ -322,6 +514,7 @@ def test_large_saved_snapshot_is_chunked_under_wire_limit(settings):
     with TestClient(create_app(replace(settings, app_origin=ORIGIN)), base_url=ORIGIN) as client:
         with connect(client) as socket:
             initialize(client, socket)
+            receive(socket, "library")
             socket.send_json({"v": 1, "type": "subscribe", "id": "resume", "conversation_id": cid})
             chunks = []
             while True:
