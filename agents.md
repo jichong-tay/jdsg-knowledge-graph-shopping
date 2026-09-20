@@ -53,12 +53,12 @@ Use `uv` 0.12.3 and the committed lockfile. Keep runtime dependencies minimal an
 
 ```bash
 uv python install 3.14
-uv sync --locked --all-groups
-uv run --locked ruff format --check .
-uv run --locked ruff check .
-uv run --locked pyright
-uv run --locked pytest -q
-git ls-files -co --exclude-standard -z | xargs -0 uv run --locked detect-secrets-hook --baseline .secrets.baseline
+uv sync --all-groups
+uv run ruff format --check .
+uv run ruff check .
+uv run pyright
+uv run pytest -q
+git ls-files -co --exclude-standard -z | xargs -0 uv run detect-secrets-hook --baseline .secrets.baseline
 ```
 
 When behavior changes, add proportional tests. At minimum retain coverage for exact-repeat idempotency, alternate wrappers, concurrent import/migration, revision ordering, rollback on persistence failure, malformed/spoofed email rejection, HTML escaping, schema checks, and health output.

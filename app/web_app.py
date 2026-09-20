@@ -768,7 +768,7 @@ def create_app(settings: Settings, *, chat_runner=run_attempt):
                     icon="shopping-basket",
                 ),
                 Div(
-                    "uv run --locked shopping import-eml "
+                    "uv run shopping import-eml "
                     "tests/fixtures/email/fairprice_order_minimal.eml --synthetic-fixture",
                     cls="empty-command mono",
                 ),

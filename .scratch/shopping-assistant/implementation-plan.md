@@ -117,11 +117,11 @@ A deployed intermediate capability is not a declaration that the whole MVP works
   report implementation complete/deployment pending rather than claiming deployment.
 
 ```bash
-uv run --locked ruff format --check .
-uv run --locked ruff check .
-uv run --locked pyright
-uv run --locked pytest -q
-git ls-files -co --exclude-standard -z | xargs -0 uv run --locked detect-secrets-hook --baseline .secrets.baseline
+uv run ruff format --check .
+uv run ruff check .
+uv run pyright
+uv run pytest -q
+git ls-files -co --exclude-standard -z | xargs -0 uv run detect-secrets-hook --baseline .secrets.baseline
 ```
 
 Public CI remains read-only, secret-free, and GitHub-hosted. Real Ollama checks are

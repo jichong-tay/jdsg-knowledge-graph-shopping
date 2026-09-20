@@ -173,7 +173,7 @@ The script:
 2. creates the `shopping-app` service account and private directories;
 3. installs pinned `uv` 0.12.3 and Python 3.14;
 4. checks out the requested commit at `/opt/shopping-app`;
-5. installs locked production dependencies;
+5. installs production dependencies;
 6. installs the production environment file and systemd units;
 7. migrates a temporary empty database and atomically promotes it, starts the web
    service, and waits for ready health;
@@ -225,7 +225,7 @@ The helper performs an **in-place** deployment:
 1. refuses local changes and verifies that the SHA belongs to `origin/main`;
 2. stops the web service, causing brief downtime;
 3. creates and verifies a root-only SQLite backup;
-4. checks out the requested commit and runs `uv sync --locked --no-dev`;
+4. checks out the requested commit and runs `uv sync --no-dev`;
 5. runs the packaged database migrations as `shopping-app`;
 6. starts the web service and requires `/api/health` to report `ready: true`;
 7. on an ordinary command failure or termination signal, restores the previous
@@ -273,7 +273,7 @@ sudo deploy-shopping --recover
 ~~~
 
 Recovery validates the root-owned record and backup, stops both possible writers,
-restores the recorded old commit, locked environment, systemd units, and SQLite
+restores the recorded old commit, dependency environment, systemd units, and SQLite
 database, then starts the old version and requires ready health. It removes the
 record only after that succeeds. You can then deploy the desired green SHA again.
 

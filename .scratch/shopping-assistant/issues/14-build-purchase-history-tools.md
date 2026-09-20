@@ -57,7 +57,7 @@ the query's thread; tool results contain no archive paths or email internals.
 - [ ] Run focused checks, then the shared full check/wheel/review workflow.
 
 ```bash
-uv run --locked pytest -q tests/test_assistant_tools.py tests/test_web.py tests/test_repository.py
+uv run pytest -q tests/test_assistant_tools.py tests/test_web.py tests/test_repository.py
 ```
 
 ## Deployable result

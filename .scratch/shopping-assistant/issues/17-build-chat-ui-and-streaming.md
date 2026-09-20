@@ -75,7 +75,7 @@ snapshot and pending command status, never replays generation.
   do not wait for ticket 18 merely to begin homelab use.
 
 ```bash
-uv run --locked pytest -q tests/test_chat_web.py tests/test_chat_streaming.py tests/test_web.py tests/test_conversations.py tests/test_assistant_runtime.py
+uv run pytest -q tests/test_chat_web.py tests/test_chat_streaming.py tests/test_web.py tests/test_conversations.py tests/test_assistant_runtime.py
 ```
 
 ## Deployable result

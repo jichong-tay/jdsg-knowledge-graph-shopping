@@ -64,7 +64,7 @@ snapshot; no operation performs model/network work inside its transaction.
   rollback to the previous application/database state on the homelab.
 
 ```bash
-uv run --locked pytest -q tests/test_conversations.py tests/test_migrations.py tests/test_repository.py
+uv run pytest -q tests/test_conversations.py tests/test_migrations.py tests/test_repository.py
 ```
 
 ## Deployable result

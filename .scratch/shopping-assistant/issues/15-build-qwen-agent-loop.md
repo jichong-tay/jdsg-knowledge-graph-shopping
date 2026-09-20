@@ -78,7 +78,7 @@ transaction while waiting. This ticket need not persist Conversations.
 - [ ] Complete the shared checks/review/docs and deploy coherent backend increments.
 
 ```bash
-uv run --locked pytest -q tests/test_ollama.py tests/test_assistant_runtime.py tests/test_assistant_context.py tests/test_config.py tests/test_deployment.py
+uv run pytest -q tests/test_ollama.py tests/test_assistant_runtime.py tests/test_assistant_context.py tests/test_config.py tests/test_deployment.py
 ```
 
 ## Deployable result

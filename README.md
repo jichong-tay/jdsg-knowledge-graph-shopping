@@ -61,24 +61,97 @@ not a second source of truth.
 
 ## Quick start
 
-Install the pinned toolchain and dependencies:
+Install **uv 0.12.3**, then prepare the project from this checkout:
 
-~~~bash
+```bash
 uv python install 3.14
-uv sync --locked --all-groups
-~~~
+uv sync --all-groups
+uv run shopping migrate
+```
 
-Create the local schema, import the sanitised example, and start the UI:
+Optionally import the synthetic sample order:
 
-~~~bash
-uv run --locked shopping migrate
-uv run --locked shopping import-eml tests/fixtures/email/fairprice_order_minimal.eml --synthetic-fixture
-uv run --locked shopping serve
-~~~
+```bash
+uv run shopping import-eml tests/fixtures/email/fairprice_order_minimal.eml --synthetic-fixture
+```
 
-Open http://127.0.0.1:8000. The application deliberately stays on loopback; the
-Ubuntu design exposes it privately through Tailscale Serve. A non-loopback bind
-requires the explicit SHOPPING_ALLOW_NON_LOOPBACK=true override.
+For everyday startup, run:
+
+```bash
+SHOPPING_APP_ORIGIN=http://127.0.0.1:8000 uv run shopping serve
+```
+
+Open **http://127.0.0.1:8000** using that exact address so Chat's origin checks
+match. Stop with Ctrl-C and rerun after code edits. Orders and the other pages work
+without Ollama. Run `shopping migrate` again when application updates add migrations.
+
+By default, these commands use the development profile, `data/shopping.sqlite3`,
+and the `data/raw-email/` archive. They honor any `SHOPPING_*` settings already in
+your terminal. Existing input emails under `data/raw-email/sample/` stay in place
+and are not automatically imported. State persists between runs; repeated sample
+imports do not duplicate the order. uv may update `uv.lock` when requirements change.
+The application binds to loopback by default; Ubuntu exposes it privately through
+Tailscale Serve.
+
+### Real Chat responses using homelab Ollama
+
+In a second terminal, start a tunnel using your existing SSH login or host alias:
+
+```bash
+bash scripts/ollama-tunnel.sh your-homelab-ssh-alias
+```
+
+Replace the example alias with the host you normally SSH into. Keep both terminals
+open, then use **Chat** in the local app. Application code, conversations, and the
+sample database stay on your Mac; prompts and tool results go to homelab Ollama.
+No application deployment is needed. The tunnel uses ordinary SSH authentication
+and host verification and binds only to local `127.0.0.1:11434`. Ctrl-C closes it.
+If that port is already occupied, stop the existing local Ollama/tunnel first.
+
+The backend requires the existing supported Ollama/model setup described below
+(Ollama 0.30.10 and `qwen3.5:9b`). These commands do not install or modify the remote
+model. Without Ollama, saved conversations remain readable but generation fails
+visibly; this workflow does not provide simulated Chat responses.
+
+To check the tunnel, keep it running and run this in another terminal **on your Mac**:
+
+```bash
+curl --fail --show-error http://127.0.0.1:11434/api/tags
+```
+
+The response should list the homelab's installed models, including `qwen3.5:9b`.
+Then open http://127.0.0.1:8000/chat and ask “What is my latest order?” to check
+the full flow using the synthetic order and its evidence link. The first response
+may take longer while the model loads.
+
+To watch GPU usage, run either command **on the homelab**, in a separate SSH session:
+
+```bash
+# Refresh GPU statistics every second using watch.
+watch -n 1 nvidia-smi
+
+# Alternatively, use NVIDIA's built-in one-second refresh.
+nvidia-smi -l 1
+```
+
+Press Ctrl-C to stop GPU monitoring; the tunnel in its separate terminal stays open.
+
+### Automated checks
+
+```bash
+uv run pytest -q
+```
+
+Tests use temporary development databases and synthetic fixtures; ordinary runs
+skip real inference. With the tunnel running, optionally check the real model:
+
+```bash
+SHOPPING_OLLAMA_SMOKE=1 uv run pytest -q -s tests/integration/test_ollama_smoke.py
+```
+
+That check uses a separate temporary synthetic database. Local app tests do not
+replace Ubuntu service, permissions, backup, and rollback verification; see
+[the deployment runbook](docs/DEPLOYMENT.md).
 
 ## Web interface
 
@@ -166,7 +239,7 @@ The default test suite skips real inference. To run the explicit synthetic check
 against the installed local endpoint, using only a temporary development database:
 
 ```bash
-SHOPPING_OLLAMA_SMOKE=1 uv run --locked pytest -q -s tests/integration/test_ollama_smoke.py
+SHOPPING_OLLAMA_SMOKE=1 uv run pytest -q -s tests/integration/test_ollama_smoke.py
 ```
 
 The local loop passed a synthetic tool round trip against the homelab model through
@@ -260,16 +333,16 @@ remain pending; implementation and verification here are local.
 
 ~~~bash
 # Apply packaged migrations
-uv run --locked shopping migrate
+uv run shopping migrate
 
 # Migrate an explicitly selected database
-uv run --locked shopping migrate --database /absolute/path/shopping.sqlite3
+uv run shopping migrate --database /absolute/path/shopping.sqlite3
 
 # Archive and import an email selected by the local operator
-uv run --locked shopping import-eml path/to/message.eml
+uv run shopping import-eml path/to/message.eml
 
 # Run the local web interface
-uv run --locked shopping serve --host 127.0.0.1 --port 8000
+uv run shopping serve --host 127.0.0.1 --port 8000
 ~~~
 
 The synthetic-fixture switch only enables reserved test sender domains, and
@@ -356,13 +429,13 @@ application's Python requirement. See Ruff's
 
 ~~~bash
 uv lock --check
-uv sync --locked --all-groups
-uv run --locked ruff format --check .
-uv run --locked ruff check .
-uv run --locked pyright
-uv run --locked pytest -q
+uv sync --all-groups
+uv run ruff format --check .
+uv run ruff check .
+uv run pyright
+uv run pytest -q
 git ls-files -co --exclude-standard -z |
-  xargs -0 uv run --locked detect-secrets-hook --baseline .secrets.baseline
+  xargs -0 uv run detect-secrets-hook --baseline .secrets.baseline
 ~~~
 
 ## Ubuntu homelab

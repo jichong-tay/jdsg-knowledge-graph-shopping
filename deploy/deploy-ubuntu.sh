@@ -78,7 +78,7 @@ validate_production_config() {
 
 sync_environment() {
   run_as_admin env UV_PYTHON_INSTALL_DIR="$PYTHON_DIR" \
-    "$UV_BIN" --directory "$APP_DIR" sync --locked --no-dev &&
+    "$UV_BIN" --directory "$APP_DIR" sync --no-dev &&
     chown -R "$ADMIN_USER:$APP_USER" "$APP_DIR" &&
     chmod -R g+rX,g-w,o-rwx "$APP_DIR" &&
     chmod 2750 "$APP_DIR"
@@ -182,7 +182,7 @@ rollback() {
     echo "Could not remove files left by the interrupted checkout." >&2
     rollback_ok=0
   elif ! sync_environment; then
-    echo "Could not restore the previous locked environment." >&2
+    echo "Could not restore the previous dependency environment." >&2
     rollback_ok=0
   fi
 
@@ -432,7 +432,7 @@ if ! post_sync_status=$(run_as_admin git -C "$APP_DIR" status --porcelain); then
   false
 fi
 if [[ -n $post_sync_status ]]; then
-  echo "The locked installation changed repository files; refusing deployment." >&2
+  echo "The dependency installation changed repository files; refusing deployment." >&2
   false
 fi
 install -o root -g root -m 0644 "$APP_DIR/deploy/systemd/shopping-migrate.service" \

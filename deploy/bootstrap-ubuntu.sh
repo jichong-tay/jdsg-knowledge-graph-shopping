@@ -146,9 +146,9 @@ if ! run_as_admin git -C "$APP_DIR" merge-base --is-ancestor "$RELEASE_SHA" orig
 fi
 run_as_admin git -C "$APP_DIR" checkout --detach "$RELEASE_SHA"
 
-echo "Installing the locked production dependencies..."
+echo "Installing the production dependencies..."
 run_as_admin env UV_PYTHON_INSTALL_DIR="$PYTHON_DIR" \
-  "$UV_BIN" --directory "$APP_DIR" sync --locked --no-dev
+  "$UV_BIN" --directory "$APP_DIR" sync --no-dev
 chown -R "$ADMIN_USER:$APP_USER" "$APP_DIR"
 chmod -R g+rX,g-w,o-rwx "$APP_DIR"
 chmod 2750 "$APP_DIR"
@@ -158,7 +158,7 @@ if ! post_sync_status=$(run_as_admin git -C "$APP_DIR" status --porcelain); then
   exit 1
 fi
 if [[ -n $post_sync_status ]]; then
-  echo "The locked installation changed repository files; refusing host installation." >&2
+  echo "The dependency installation changed repository files; refusing host installation." >&2
   exit 1
 fi
 

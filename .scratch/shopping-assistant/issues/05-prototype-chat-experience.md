@@ -20,7 +20,7 @@ Which concrete dedicated-page interaction best communicates conversation navigat
 ## Prototype ready for review — 2026-09-08
 
 - Primary source: throwaway branch `codex/chat-ui-prototype`, commit `f5d5a81`.
-- Worktree: `/tmp/shopping-chat-prototype.qWAJV2/worktree`; run instructions and limitations are in `CHAT_PROTOTYPE.md` on that branch. From the worktree, run `uv run --locked python -m app.prototype_chat`.
+- Worktree: `/tmp/shopping-chat-prototype.qWAJV2/worktree`; run instructions and limitations are in `CHAT_PROTOTYPE.md` on that branch. From the worktree, run `uv run python -m app.prototype_chat`.
 - Local preview: <http://127.0.0.1:8015/prototype/chat?variant=A>. This is a local development preview, not a homelab deployment.
 - A — Conversation library: visible history rail with receipt details on demand.
 - B — Focused conversation: wider chat canvas with conversation history in a menu.

@@ -37,16 +37,16 @@ jobs:
       - name: Verify lockfile
         run: uv lock --check
 
-      - name: Install locked dependencies
-        run: uv sync --locked --all-groups
+      - name: Install dependencies
+        run: uv sync --all-groups
 
       - name: Scan tracked files for secrets
-        run: git ls-files -z | xargs -0 uv run --locked detect-secrets-hook --baseline .secrets.baseline
+        run: git ls-files -z | xargs -0 uv run detect-secrets-hook --baseline .secrets.baseline
 
       - name: Check formatting and lint
         run: |
-          uv run --locked ruff format --check .
-          uv run --locked ruff check .
+          uv run ruff format --check .
+          uv run ruff check .
 
       - name: Check Ubuntu deployment scripts
         run: |
@@ -55,10 +55,10 @@ jobs:
           bash deploy/deploy-ubuntu.sh --help
 
       - name: Check types
-        run: uv run --locked pyright
+        run: uv run pyright
 
       - name: Run tests
-        run: uv run --locked pytest -q
+        run: uv run pytest -q
 
       - name: Smoke-test migrations
         env:
@@ -66,7 +66,7 @@ jobs:
           SHOPPING_CI_DATABASE: ${{ runner.temp }}/shopping-ci/shopping.sqlite3
         run: |
           install -d -m 700 "$SHOPPING_CI_STATE_DIR"
-          uv run --locked shopping migrate --database "$SHOPPING_CI_DATABASE"
+          uv run shopping migrate --database "$SHOPPING_CI_DATABASE"
 
       - name: Smoke-test the packaged wheel
         env:
@@ -78,7 +78,7 @@ jobs:
           uv build --wheel --no-build-isolation --out-dir "$SHOPPING_WHEEL_DIR"
           uv venv --python 3.14 "$SHOPPING_WHEEL_VENV"
           UV_PROJECT_ENVIRONMENT="$SHOPPING_WHEEL_VENV" \
-            uv sync --locked --no-dev --no-install-project
+            uv sync --no-dev --no-install-project
           uv pip install --python "$SHOPPING_WHEEL_VENV/bin/python" \
             --no-deps "$SHOPPING_WHEEL_DIR"/*.whl
           uv pip check --python "$SHOPPING_WHEEL_VENV/bin/python"

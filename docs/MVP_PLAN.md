@@ -1125,7 +1125,7 @@ Exit: one scheduled alert arrives and links to the private dashboard; rerunning 
 
 - Provision one `shopping-app` runtime account, private `/var/lib`, `/var/backups`, and `/etc` directories, and hardened systemd units. Continue using the existing administrator login for deployment.
 - Run the bootstrap script for an exact CI-passing commit at `/opt/shopping-app` and expose only the loopback service through Tailscale Serve.
-- Have the root-owned helper deploy an exact commit in place with `uv sync --locked`, a consistent pre-migration SQLite backup, migration, service restart, and health check.
+- Have the root-owned helper deploy an exact commit in place with `uv sync`, a consistent pre-migration SQLite backup, migration, service restart, and health check.
 - Test rollback of both code and database after a deliberately failed migration/health check.
 - Keep the public repository on GitHub-hosted runners only; no pull-request workflow may execute on the homelab.
 
