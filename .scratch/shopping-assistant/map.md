@@ -8,7 +8,7 @@ Reach an Ollama-only chatbot MVP on the existing homelab deployment: open the de
 
 ## Notes
 
-- Current phase: Wayfinder planning is complete. The five implementation tasks below are open; ticket 14 is next. Planning resolution has not run application code, migrations, model checks, or deployments. Pick up implementation as a distinct task rather than treating this map as proof of completion.
+- Current phase: Wayfinder planning is complete and tickets 14–17 have local implementations recorded in their issue files. Ticket 18 remains the host verification checkpoint; deployment and host verification are still pending. Treat this map as planning context and implementation evidence, not proof of deployment.
 - Use one application-owned Python agent loop and local Ollama for this MVP. Cloud support and orchestration-library comparisons are deferred to a later phase.
 - Learning-friendly MVP: prefer small Python functions and explicit state transitions in the existing application; no general-purpose messaging platform, extra infrastructure, or speculative abstractions. Retain the accepted data/privacy/recovery safeguards.
 - Host privately on loopback with remote access only through existing Tailscale Serve; no public app endpoint, Funnel, or port forwarding. Browser origin/session protections do not introduce user accounts.
@@ -26,6 +26,13 @@ Reach an Ollama-only chatbot MVP on the existing homelab deployment: open the de
 - Acceptance is a short checklist within ticket 09, using fixed synthetic examples covering facts/evidence, safe tool boundaries, lifecycle recovery, and homelab runtime limits; no separate evaluation-planning exercise.
 - Deploy coherent checked increments frequently, including useful checkpoints within tickets. The homelab is experimental; brief restarts are acceptable. Do not wait for the entire MVP or ticket 18. Preserve existing CI, private access, backups, migrations and rollback; no automated Ollama/model updates or new deployment system.
 
+## Plans and research
+
+- [Chat MVP implementation plan](plans/chat-mvp.md) — implementation slices and host acceptance checks.
+- [Source layout plan](plans/source-layout.md) — completed package and planning-folder reorganization, with verification results.
+- [Local model selection](research/local-model-selection.md) — dated research background for the model choice.
+- [Chat UI options](research/chat-ui-options.md) — dated research background for the interface choice.
+
 ## Decisions so far
 
 <!-- Resolved child tickets are indexed here. -->
@@ -40,7 +47,7 @@ Reach an Ollama-only chatbot MVP on the existing homelab deployment: open the de
 
 - [Define the durable conversation lifecycle](issues/04-define-conversation-lifecycle.md): Save on first message, retain until deletion, allow one active response per conversation, recover across disconnects, and preserve incomplete attempts on explicit retry.
 
-- [Prototype the dedicated Chat experience](issues/05-prototype-chat-experience.md): Operator approved A — Conversation library, with visible desktop history and on-demand receipt details; the throwaway prototype is preserved separately and implementation remains paused.
+- [Prototype the dedicated Chat experience](issues/05-prototype-chat-experience.md): Operator approved A — Conversation library, with visible desktop history and on-demand receipt details; the throwaway prototype is preserved separately and the local implementation is recorded in ticket 17.
 
 - [Define the provider-neutral agent runtime](issues/06-define-agent-runtime.md): Accepted a single active Python/Ollama loop with a 180-second deadline, 4 model requests, 8 tool proposals, bounded 8K context/results, fresh evidence, one validation correction, and explicit failure/cleanup handling; hardware validation remains pending.
 
@@ -56,14 +63,14 @@ Reach an Ollama-only chatbot MVP on the existing homelab deployment: open the de
 
 ## Implementation queue
 
-The [implementation plan](implementation-plan.md) contains shared constraints,
+The [Chat MVP implementation plan](plans/chat-mvp.md) contains shared constraints,
 coverage and release checkpoints. Each child task supplies file boundaries and checks.
 
-1. [14 — Build purchase history tools and evidence](issues/14-build-purchase-history-tools.md) — next, unblocked.
-2. [15 — Build the Qwen connection and Python agent loop](issues/15-build-qwen-agent-loop.md) — after 14.
-3. [16 — Build saved Conversations and Response Attempts](issues/16-build-conversation-persistence.md) — after 15.
-4. [17 — Build the Chat UI, streaming and recovery](issues/17-build-chat-ui-and-streaming.md) — after 16.
-5. [18 — Verify the homelab Shopping Assistant MVP](issues/18-verify-homelab-chat-mvp.md) — after 17; earlier increments already deploy.
+1. [14 — Build purchase history tools and evidence](issues/14-build-purchase-history-tools.md) — implemented locally; evidence pages and bounded tools are recorded in the ticket.
+2. [15 — Build the Qwen connection and Python agent loop](issues/15-build-qwen-agent-loop.md) — implemented locally; model/host verification remains pending.
+3. [16 — Build saved Conversations and Response Attempts](issues/16-build-conversation-persistence.md) — implemented locally; migration/runtime verification remains pending.
+4. [17 — Build the Chat UI, streaming and recovery](issues/17-build-chat-ui-and-streaming.md) — implemented locally; protected UI deployment verification remains pending.
+5. [18 — Verify the homelab Shopping Assistant MVP](issues/18-verify-homelab-chat-mvp.md) — current verification checkpoint; do not claim completion until host checks pass.
 
 No unresolved planning branch remains. Actual model behavior and host checks are
 implementation evidence still to collect, not completed by resolving design tickets.

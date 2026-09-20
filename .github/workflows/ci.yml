@@ -84,12 +84,36 @@ jobs:
           uv pip check --python "$SHOPPING_WHEEL_VENV/bin/python"
           "$SHOPPING_WHEEL_VENV/bin/python" -I -c '
           from importlib.resources import files
+          package = files("shopping")
           for name in ("001_ingestion.sql", "002_conversations.sql"):
-              assert files("app").joinpath("migrations", name).is_file(), name
+              assert package.joinpath("storage", "migrations", name).is_file(), name
+          for name in ("shopping.css", "shopping.js", "chat.js"):
+              assert package.joinpath("web", "static", name).is_file(), name
           '
           chmod -R a-w "$SHOPPING_WHEEL_VENV"
+          cd "$SHOPPING_WHEEL_STATE_DIR"
+          export SHOPPING_ENV=development
+          export SHOPPING_DATA_DIR="$SHOPPING_WHEEL_STATE_DIR"
           "$SHOPPING_WHEEL_VENV/bin/shopping" migrate \
             --database "$SHOPPING_WHEEL_STATE_DIR/shopping.sqlite3"
+          "$SHOPPING_WHEEL_VENV/bin/python" -I -c '
+          import os
+          from pathlib import Path
+          import shopping
+          from shopping.config import load_settings
+          from shopping.web import create_app
+          assert Path(shopping.__file__).resolve().is_relative_to(
+              Path(os.environ["SHOPPING_WHEEL_VENV"]).resolve()
+          )
+          with create_app(load_settings()).get_testclient() as client:
+              response = client.get("/api/health")
+              assert response.status_code == 200
+              assert response.json()["database"]["schema_version"] == 2
+              assert client.get("/").status_code == 200
+              for name in ("shopping.css", "shopping.js", "chat.js"):
+                  asset = client.get(f"/static/{name}")
+                  assert asset.status_code == 200 and asset.content, name
+          '
 
       - name: Verify checks leave the repository clean
         run: |

@@ -8,7 +8,7 @@ Blocked by: 15
 ## Goal and contracts
 
 Persist the approved lifecycle using a small SQLite repository, independent of
-browser or real-model tests. Read the [shared plan](../implementation-plan.md),
+browser or real-model tests. Read the [shared plan](../plans/chat-mvp.md),
 tickets [03](03-define-cloud-disclosure.md), [04](04-define-conversation-lifecycle.md),
 [06](06-define-agent-runtime.md), and [07](07-define-streaming-protocol.md).
 

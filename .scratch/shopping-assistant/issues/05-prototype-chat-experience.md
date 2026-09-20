@@ -14,7 +14,7 @@ Which concrete dedicated-page interaction best communicates conversation navigat
 
 - MVP narrowed to Ollama only. Omit provider selection and cloud consent UI; preserve the accepted conversation lifecycle. Use a design prototype for review while application implementation remains paused.
 - The operator explicitly chose to reuse the existing FastHTML/Stitchyard interface after comparing existing chat UI solutions. Reuse the application shell, navigation, theme, forms, buttons, and other suitable components; design only the chat-specific message list, composer, conversation navigation, and response/tool states within that shell.
-- Open WebUI, Chainlit, and React-based assistant-ui are not selected for this MVP. The [chat UI comparison](../chat-ui-options-research.md) records research context; this choice avoids adding a separate chat application or React frontend to the current design.
+- Open WebUI, Chainlit, and React-based assistant-ui are not selected for this MVP. The [chat UI comparison](../research/chat-ui-options.md) records research context; this choice avoids adding a separate chat application or React frontend to the current design.
 - Framework reuse is settled. This prototype ticket remains open until the operator reviews the concrete layout and interactions; choosing the UI stack does not complete that review or authorize application implementation.
 
 ## Prototype ready for review — 2026-09-08

@@ -2,7 +2,7 @@
 
 ## Current state
 
-This is a Python 3.14 local-first shopping application, not a starter placeholder. The implemented first slice archives and deterministically parses a narrow retailer email layout into SQLite and renders current orders with FastHTML. The core is vendor-neutral; vendor-specific sender, subject, and HTML rules belong in adapters. Gmail, analytics, Graphify, Ollama/Gemma chat, Telegram, and off-machine backup are planned but not implemented. Ubuntu bootstrap and in-place deployment scripts exist but have not been run on the homelab host.
+This is a Python 3.14 local-first shopping application, not a starter placeholder. The implemented first slice archives and deterministically parses a narrow retailer email layout into SQLite and renders current orders with FastHTML. The source package now also contains Gmail authorization/client/provenance/sync code, the local Ollama assistant, saved Conversations, and protected Chat UI; automatic scheduled Gmail ingestion and homelab deployment remain unverified. Analytics, Graphify, Telegram, and off-machine backup remain planned. The Ubuntu bootstrap and in-place deployment scripts have not been run on the homelab host.
 
 Read `README.md`, `docs/MVP_PLAN.md`, and `docs/DEPLOYMENT.md` before changing architecture or milestone scope.
 
@@ -26,7 +26,7 @@ Read `README.md`, `docs/MVP_PLAN.md`, and `docs/DEPLOYMENT.md` before changing a
 
 ## Migrations
 
-- Packaged migrations live in `app/migrations/` and use names like `001_ingestion.sql`.
+- Packaged migrations live in `src/shopping/storage/migrations/` and use names like `001_ingestion.sql` (wheel path `shopping/storage/migrations/`).
 - Only `shopping migrate` may change the schema. Web startup and import commands verify the schema and fail with an instruction to migrate.
 - Migrations are checksum-recorded, dirty-state aware, and serialized with a file lock.
 - Never edit an applied migration after release. Add the next numbered migration.
@@ -63,7 +63,7 @@ git ls-files -co --exclude-standard -z | xargs -0 uv run detect-secrets-hook --b
 
 When behavior changes, add proportional tests. At minimum retain coverage for exact-repeat idempotency, alternate wrappers, concurrent import/migration, revision ordering, rollback on persistence failure, malformed/spoofed email rejection, HTML escaping, schema checks, and health output.
 
-Before handoff, also verify a built wheel contains `app/migrations/001_ingestion.sql` and can run `shopping migrate` in an isolated environment.
+Before handoff, also verify a built wheel contains `shopping/storage/migrations/001_ingestion.sql` and can run `shopping migrate` in an isolated environment.
 
 ## Runtime and deployment
 
@@ -89,7 +89,7 @@ Update `README.md` after changing current behavior or setup. Update `docs/MVP_PL
 
 ### Issue tracker
 
-Issues are tracked as local Markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+Keep issues, specs, research, and plans under `.scratch/shopping-assistant/`, the only immediate child directory of `.scratch/`. When creating or updating planning artifacts, follow `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

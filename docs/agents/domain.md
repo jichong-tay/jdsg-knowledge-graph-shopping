@@ -20,7 +20,13 @@ If these files don't exist, **proceed silently**. Don't flag their absence or su
 ├── CONTEXT.md
 ├── docs/
 │   └── adr/
-└── app/
+└── src/
+    └── shopping/
+        ├── ingestion/
+        ├── purchases/
+        ├── assistant/
+        ├── web/
+        └── storage/
 ```
 
 ## Use the glossary's vocabulary

@@ -9,7 +9,7 @@ Blocked by: 17
 
 Verify the already incrementally deployed Assistant through the actual application
 service and private Tailscale route. This is not the first allowed deployment or a
-model benchmark. Read the [shared plan](../implementation-plan.md), ticket
+model benchmark. Read the [shared plan](../plans/chat-mvp.md), ticket
 [09](09-plan-implementation-slices.md) acceptance checklist, ticket
 [12](12-define-provider-operations.md), and `docs/DEPLOYMENT.md`.
 

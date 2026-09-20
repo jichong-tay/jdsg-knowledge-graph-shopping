@@ -54,7 +54,7 @@ behavior. All five recommendations above are accepted under the operator's lates
 
 ## Model decision — supersedes round-one Q1
 
-After reviewing [local model research](../local-model-selection-research.md), the
+After reviewing [local model research](../research/local-model-selection.md), the
 operator selected the already installed `qwen3.5:9b` as the MVP default, with
 thinking disabled (`think: false` in the native Ollama request). Keep the accepted
 8K context, 768 output-token limit, and single active attempt. Do not require a

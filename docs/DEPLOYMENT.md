@@ -70,7 +70,7 @@ Brief restarts are acceptable; keep verified SQLite backup, migration, private
 access and database-aware rollback. The host still uses `SHOPPING_ENV=production`;
 experimental use does not turn off its runtime or data safeguards.
 
-The [implementation sequence](../.scratch/shopping-assistant/implementation-plan.md)
+The [implementation sequence](../.scratch/shopping-assistant/plans/chat-mvp.md)
 is purchase history tools, Qwen backend, saved Conversations, Chat UI/recovery, then
 final host verification. Early backend/schema increments can deploy without a Chat
 navigation item. The last ticket verifies accumulated deployments rather than

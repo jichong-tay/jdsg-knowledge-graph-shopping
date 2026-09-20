@@ -1,16 +1,31 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
-from app.config import Settings
-from app.db.migrations import migrate
+from shopping import config as shopping_config
+from shopping.config import Settings
+from shopping.storage.schema import migrate
 
 
 @pytest.fixture
 def fixture_dir() -> Path:
     return Path(__file__).parent / "fixtures" / "email"
+
+
+@pytest.fixture
+def sqlite_backup_module():
+    path = Path(__file__).parent.parent / "deploy" / "sqlite_backup.py"
+    spec = importlib.util.spec_from_file_location("shopping_test_sqlite_backup", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -21,7 +36,7 @@ def settings(tmp_path: Path) -> Settings:
         data_dir=data_dir,
         database_path=data_dir / "shopping.sqlite3",
         raw_email_dir=data_dir / "raw-email",
-        migrations_dir=Path(__file__).parent.parent / "app" / "migrations",
+        migrations_dir=Path(shopping_config.__file__).resolve().parent / "storage" / "migrations",
         allow_synthetic_fixtures=True,
     )
     value.prepare_private_directories()
@@ -32,8 +47,8 @@ def settings(tmp_path: Path) -> Settings:
 @pytest.fixture
 def purchase_facts(settings, fixture_dir):
     """Synthetic current orders with tied/missing dates and more than one item page."""
-    from app.db.connection import connect_database, transaction
-    from app.ingestion import import_eml
+    from shopping.ingestion.pipeline import import_eml
+    from shopping.storage.connection import connect_database, transaction
 
     import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
     connection = connect_database(settings.database_path)

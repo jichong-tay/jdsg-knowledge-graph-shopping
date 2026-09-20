@@ -9,13 +9,13 @@ Initial data source: one frequently used online grocery retailer
 
 The immediate MVP is an Ollama-only Shopping Assistant on the existing homelab deployment: open the dedicated Chat page through Tailscale, ask about receipt items and purchase history, and receive answers supported by four application-owned SQLite read tools. Use the agreed durable conversation, streaming, Stop, retry, and reconnect behavior, with a small Python agent loop. The tools are `search_products`, `get_product_history`, `list_recent_orders`, and `get_order`; they include all current receipt items, and the extracted delivery date is used as Purchase date by operator convention.
 
-The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [implementation plan](../.scratch/shopping-assistant/implementation-plan.md) and tickets 14–18 define the queued work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Tickets 14–17 now have local implementations: bounded purchase-history tools, product evidence pages, the native Qwen backend, saved Conversation lifecycle operations, and the protected streaming Chat UI with reconnect and draft recovery. A synthetic local-loop/homelab-model check passed; deployment and host verification of the protected UI remain pending.
+The operator reports that the deployment pipeline and Tailscale-hosted page already work. Reuse that baseline; verify actual inference during incremental chatbot implementation. The selected model is installed Qwen3.5 9B with thinking disabled, not a measured accuracy or GPU-fit guarantee. Cloud providers and agent-orchestration-library comparisons are deferred from this MVP. Wayfinder planning is complete; the [Chat MVP implementation plan](../.scratch/shopping-assistant/plans/chat-mvp.md) and tickets 14–18 define the work. Deploy checked working increments frequently to the experimental homelab, preserving the existing CI, backup and rollback path; do not wait for the whole Chat feature. Tickets 14–17 now have local implementations: bounded purchase-history tools, product evidence pages, the native Qwen backend, saved Conversation lifecycle operations, and the protected streaming Chat UI with reconnect and draft recovery. A synthetic local-loop/homelab-model check passed; deployment and host verification of the protected UI remain pending.
 
 The broader roadmap below also describes replenishment predictions, graph relationships, shopping-list writes, and Telegram alerts. Those features are later work and are not prerequisites for the immediate chatbot MVP. Durable purchases remain searchable without generating inappropriate replenishment alerts.
 
 The LLM is not the database and is not the forecasting engine. SQLite is authoritative; Python calculates predictions; the LLM selects tools and explains their results.
 
-Implementation as of 10 August 2026: the Python 3.14 project, migration runner, ingestion schema, exact-byte archive, vendor-adapter boundary, deterministic first-retailer parser, idempotent manual import, current-order FastHTML pages, health endpoint, and local test suite work against irreversibly sanitised fixtures shaped from private samples. GitHub-hosted CI is configured and awaits its first pushed run. Private source emails remain ignored and must never enter the public test suite. A one-time Ubuntu bootstrap script and simple in-place deployment helper are included but have not run on the homelab. Gmail OAuth, analytics, graph generation, Ollama, chat, Telegram, and off-machine backup remain unimplemented milestones.
+Implementation as of 10 August 2026: the Python 3.14 project, migration runner, ingestion schema, exact-byte archive, vendor-adapter boundary, deterministic first-retailer parser, idempotent manual import, current-order FastHTML pages, health endpoint, local Ollama assistant, saved Conversations, protected Chat UI, and local test suite work against irreversibly sanitised fixtures shaped from private samples. GitHub-hosted CI is configured and awaits its first pushed run. Private source emails remain ignored and must never enter the public test suite. A one-time Ubuntu bootstrap script and simple in-place deployment helper are included but have not run on the homelab. Gmail authorization/client/sync code exists, while automatic scheduled Gmail ingestion, analytics, graph generation, Telegram, and off-machine backup remain planned or unverified milestones.
 
 ```mermaid
 flowchart TB
@@ -137,7 +137,7 @@ OLLAMA_MAX_LOADED_MODELS: 1
 
 Use `ollama ps` during acceptance testing. The target is `100% GPU`. If 8K context causes offload or instability, try the accepted 4K setting before changing the model. Investigate concrete failures before considering an alternative; do not automatically switch models, download replacements, or enlarge the accepted budgets.
 
-The operator selected Qwen3.5 9B after reviewing the [local model research](../.scratch/shopping-assistant/local-model-selection-research.md), prioritizing progress over further model comparisons. Existing other models can remain installed but are not loaded for an MVP comparison. Published benchmarks are supporting evidence, not proof of this application's behavior on the host.
+The operator selected Qwen3.5 9B after reviewing the [local model research](../.scratch/shopping-assistant/research/local-model-selection.md), prioritizing progress over further model comparisons. Existing other models can remain installed but are not loaded for an MVP comparison. Published benchmarks are supporting evidence, not proof of this application's behavior on the host.
 
 Use deterministic parsing before the LLM. The model should only resolve ambiguous product identity/category mappings and turn tool results into natural language.
 
@@ -706,8 +706,8 @@ CREATE INDEX idx_graph_edges_target
 
 ### Migration and backup protocol
 
-- `app/migrations/001_ingestion.sql` contains only the migration ledger, email sync/messages, retailers, brands, categories, products, retailer products/aliases, orders, revisions/source associations, and items required for the first vertical slice.
-- `app/migrations/002_conversations.sql` implements the Conversation tables shown above, including attempts, bounded tool records, command outcomes, and content-free creation/deletion fences. Submitted messages are immutable; deleting a Conversation cascades only through its messages, attempts and tools. Command fingerprints/outcomes are scrubbed to a minimal gone result on deletion.
+- `src/shopping/storage/migrations/001_ingestion.sql` contains only the migration ledger, email sync/messages, retailers, brands, categories, products, retailer products/aliases, orders, revisions/source associations, and items required for the first vertical slice.
+- `src/shopping/storage/migrations/002_conversations.sql` implements the Conversation tables shown above, including attempts, bounded tool records, command outcomes, and content-free creation/deletion fences. Submitted messages are immutable; deleting a Conversation cascades only through its messages, attempts and tools. Command fingerprints/outcomes are scrubbed to a minimal gone result on deletion.
 - Analytics, notification, and graph tables remain targets for later numbered migrations.
 - Each migration has a recorded SHA-256 checksum and dirty/in-progress state. Only one migration process may run at a time.
 - Deployment runs the migration one-shot synchronously before starting the web
@@ -976,7 +976,7 @@ health-checks, and restores the previous code/database on failure. Brief downtim
 accepted; blue/green releases and symlink switching are outside the MVP. See
 [the Ubuntu homelab runbook](DEPLOYMENT.md).
 
-## 10. Repository layout (implemented plus planned modules)
+## 10. Repository layout (implemented source)
 
 ```text
 jdsg-knowledge-graph-shopping/
@@ -985,35 +985,18 @@ jdsg-knowledge-graph-shopping/
 ├── pyproject.toml
 ├── uv.lock
 ├── .env.example
-├── main.py
-├── app/
-│   ├── __init__.py
-│   ├── cli.py
+├── src/shopping/
+│   ├── main.py                    # shopping.main:main
 │   ├── config.py
-│   ├── runtime.py
-│   ├── models.py
-│   ├── ingestion.py
-│   ├── migrations/
-│   │   ├── 001_ingestion.sql
-│   │   ├── 002_analytics.sql                 # planned
-│   │   ├── 003_chat.sql                      # planned
-│   │   └── 004_notifications_and_graph.sql   # planned
-│   ├── api/
-│   ├── chat/
-│   ├── db/
-│   │   ├── connection.py
-│   │   ├── migrations.py
-│   │   └── repository.py
-│   ├── email/
-│   │   ├── archive.py
-│   │   ├── normalize.py
-│   │   └── parsers/
-│   │       ├── __init__.py
-│   │       └── fairprice.py
-│   ├── products/
-│   ├── analytics/
-│   ├── graph/
-│   └── notifications/
+│   ├── ingestion/                 # archive, parsers, Gmail sync, import store
+│   ├── purchases/                 # purchase-history queries and normalization
+│   ├── assistant/                 # Ollama runtime, context, tools, conversations
+│   ├── web/                       # FastHTML routes, pages, Chat, static assets
+│   │   └── static/
+│   └── storage/
+│       └── migrations/
+│           ├── 001_ingestion.sql
+│           └── 002_conversations.sql
 ├── knowledge/                 # generated, untracked
 ├── graphify-out/              # generated, untracked
 ├── data/                      # private, untracked

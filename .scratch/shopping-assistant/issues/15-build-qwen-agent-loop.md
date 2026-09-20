@@ -10,7 +10,7 @@ Blocked by: 14
 Produce one tool-grounded answer with installed `qwen3.5:9b`, thinking disabled,
 through a small native Ollama adapter and explicit Python loop. No framework, model
 comparison, permanent test CLI, production Chat route, or automatic updates. Read
-the [shared plan](../implementation-plan.md) and final contracts in tickets
+the [shared plan](../plans/chat-mvp.md) and final contracts in tickets
 [03](03-define-cloud-disclosure.md), [06](06-define-agent-runtime.md), and
 [12](12-define-provider-operations.md).
 

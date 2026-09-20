@@ -147,7 +147,7 @@ green-main CI, verified backup, migration and rollback safeguards remain in forc
 Keep the deployed `SHOPPING_ENV=production`; no new environment or automatic Ollama
 updater follows from the homelab being experimental.
 
-The [implementation plan](../implementation-plan.md) records shared constraints,
+The [implementation plan](../plans/chat-mvp.md) records shared constraints,
 coverage and deployment checkpoints. The five task files are:
 
 1. [14 — Purchase history tools and evidence](14-build-purchase-history-tools.md).

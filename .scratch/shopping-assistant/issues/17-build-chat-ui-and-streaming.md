@@ -8,7 +8,7 @@ Blocked by: 16
 ## Goal and contracts
 
 Ship a usable dedicated Chat page using approved prototype A and the actual saved
-Python/Qwen loop. Read the [shared plan](../implementation-plan.md) and final
+Python/Qwen loop. Read the [shared plan](../plans/chat-mvp.md) and final
 tickets [03](03-define-cloud-disclosure.md), [04](04-define-conversation-lifecycle.md),
 [05](05-prototype-chat-experience.md), [06](06-define-agent-runtime.md), and
 [07](07-define-streaming-protocol.md). Their accepted security/lifecycle requirements

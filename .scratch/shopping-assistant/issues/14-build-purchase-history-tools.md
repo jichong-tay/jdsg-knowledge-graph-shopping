@@ -9,7 +9,7 @@ Blocked by: 09
 
 Implement the four purchase history Read Tools and real evidence destinations,
 without a model, new ingestion logic, or shopping writes. Read the shared
-[implementation plan](../implementation-plan.md), glossary, and final contracts in
+[implementation plan](../plans/chat-mvp.md), glossary, and final contracts in
 tickets [02](02-define-read-tools.md), [06](06-define-agent-runtime.md), and
 [11](11-define-receipt-date-extraction.md).
 

@@ -8,9 +8,9 @@ import time
 import httpx2 as httpx
 import pytest
 
-from app.assistant.ollama import read_metadata
-from app.assistant.runtime import run_attempt
-from app.ingestion import import_eml
+from shopping.assistant.ollama import read_metadata
+from shopping.assistant.runtime import run_attempt
+from shopping.ingestion.pipeline import import_eml
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SHOPPING_OLLAMA_SMOKE") != "1",

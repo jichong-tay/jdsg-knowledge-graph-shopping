@@ -25,9 +25,10 @@ committed fixtures are irreversibly sanitised structural examples using reserved
 .invalid addresses. Private emails under data/ are never test fixtures and remain
 untracked.
 
-Gmail ingestion, analytics and replenishment predictions, Graphify projection,
-Telegram alerts and off-machine private-data backups are planned
-but not implemented. The operator reports that the homelab deployment pipeline and
+Gmail authorization, client, provenance, and sync code live in the ingestion
+package. Automatic scheduled Gmail ingestion, analytics and replenishment
+predictions, Graphify projection, Telegram alerts and off-machine private-data
+backups remain planned or operator-configured capabilities. The operator reports that the homelab deployment pipeline and
 Tailscale access to the hosted page are already working. The repository's specific
 bootstrap/rollback procedures have not been independently verified in this session.
 
@@ -36,7 +37,7 @@ four read-only purchase history tools and saved conversations. The selected MVP 
 already installed `qwen3.5:9b`, with thinking disabled. Actual model/tool operation
 still needs an integration check, not a prerequisite model comparison; cloud
 providers and agent-framework comparisons are deferred.
-Wayfinder planning is complete; the five [implementation tasks](.scratch/shopping-assistant/implementation-plan.md)
+Wayfinder planning is complete; the five [implementation tasks](.scratch/shopping-assistant/plans/chat-mvp.md)
 are underway: purchase-history tools, the local Qwen backend, conversation persistence, and the protected Chat UI are implemented locally. Deploy working,
 checked increments frequently to the experimental homelab rather than waiting for
 the whole Chat feature. Homelab deployment and verification of the protected Chat page remain pending.
@@ -52,12 +53,20 @@ flowchart TD
     S --> W["FastHTML purchase-history UI"]
     S -. planned .-> P["Analytics and predictions"]
     S -. planned .-> G["Rebuildable graph projection"]
-    S -. planned MVP .-> C["Ollama Shopping Assistant"]
+    S --> C["Implemented locally: Ollama Shopping Assistant"]
     P -. planned .-> T["Telegram alerts"]
 ~~~
 
 SQLite is authoritative. Graph and Markdown outputs will be rebuildable projections,
 not a second source of truth.
+
+The installed package is `shopping` under `src/`. `shopping.ingestion` owns email
+archive, parsers, Gmail sync, and import persistence; `shopping.purchases` owns
+purchase-history queries and normalization; `shopping.assistant` owns the local
+Ollama loop, conversations, context, and bounded tools; `shopping.web` owns the
+FastHTML pages, protected Chat transport, and local static assets; and
+`shopping.storage` owns SQLite connections, runtime checks, and migrations.
+The public command targets `shopping.main:main`.
 
 ## Quick start
 
@@ -74,6 +83,9 @@ Optionally import the synthetic sample order:
 ```bash
 uv run shopping import-eml tests/fixtures/email/fairprice_order_minimal.eml --synthetic-fixture
 ```
+
+The `shopping` command is registered in `pyproject.toml` and calls
+`shopping.main:main`. It handles migration, import, and server commands.
 
 For everyday startup, run:
 
@@ -174,7 +186,7 @@ from public CDNs.
 
 ## Purchase history read tools
 
-`app.assistant.tools` now exposes `tool_schemas()`, strict `validate_arguments()`,
+`shopping.assistant.tools` now exposes `tool_schemas()`, strict `validate_arguments()`,
 and `dispatch_tool(settings, name, arguments)` for `search_products`,
 `get_product_history`, `list_recent_orders`, and `get_order`. These functions are
 used by the local Qwen backend and Chat page.
@@ -202,7 +214,7 @@ internals are returned, and no shopping data or schema changes are made.
 
 ## Local Qwen backend
 
-`app.assistant.runtime.run_attempt()` now runs the native Ollama tool loop and
+`shopping.assistant.runtime.run_attempt()` now runs the native Ollama tool loop and
 returns a complete, incomplete, or rejected result. Optional asynchronous callbacks
 receive provisional text, correlated tool activity/results, and a terminal event.
 `availability()` reports only the local response slot; it never loads a model.
@@ -293,7 +305,7 @@ messages, Response Attempts, bounded tool records, and command deduplication.
 Run `shopping migrate` before using this code with an existing database; startup
 only verifies the schema. Chat mutations use the protected WebSocket route.
 
-`app.assistant.conversations` uses short-lived SQLite connections and functions:
+`shopping.assistant.conversations` uses short-lived SQLite connections and functions:
 
 - `new_draft()` issues a creation key without saving a Conversation. `accept_command()`
   accepts submit, Retry, Stop, rename, or confirmed delete. First submission saves

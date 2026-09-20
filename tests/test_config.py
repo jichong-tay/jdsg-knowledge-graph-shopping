@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from app.cli import main
-from app.config import Settings, load_settings
-from app.email.parsers import UnsupportedEmailError
+from shopping.config import Settings, load_settings
+from shopping.ingestion.parsers import UnsupportedEmailError
+from shopping.main import main
 
 
 def test_server_bind_defaults_to_loopback(settings) -> None:
