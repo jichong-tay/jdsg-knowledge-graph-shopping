@@ -1,11 +1,14 @@
 """One application-owned response loop; no persistence or model administration."""
 
 import asyncio
+import json
 import re
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx2 as httpx
 
@@ -26,6 +29,7 @@ Stream = Callable[[Settings, list[dict]], AsyncGenerator[dict]]
 Emitter = Callable[[dict], Awaitable[None]]
 _REFERENCE = re.compile(r"\[\[((?:order|product):[1-9][0-9]*)\]\]")
 _MODE = re.compile(r"^\[\[(clarification|unsupported)\]\]\s*")
+_GREETING = re.compile(r"^(?:hi|hello|hey|good morning|good afternoon|good evening)[!. ,]*$", re.I)
 
 
 def availability() -> str:
@@ -56,11 +60,111 @@ def _complete(state: dict) -> dict:
     ):
         return _finish(state, "incomplete", "invalid_evidence")
     if not text or (not references and mode is None):
+        if any(result["status"] == "size_limit" for _, result in state["results"]):
+            return _finish(state, "incomplete", "size_limit")
+        fallback = _recorded_fallback(state)
+        if fallback is not None:
+            answer, refs = fallback
+            evidence = {key: state["evidence"][key] for key in refs}
+            if (
+                len(json.dumps(answer, ensure_ascii=False).encode("utf-8")) > MAX_OUTPUT_BYTES
+                or len(json.dumps(list(evidence.values()), ensure_ascii=False).encode("utf-8"))
+                > 8192
+            ):
+                return _finish(state, "incomplete", "output_limit")
+            state["text"] = answer
+            state["evidence"] = evidence
+            return _finish(state, "complete")
         return _finish(state, "incomplete", "missing_evidence")
     state["text"] = _MODE.sub("", text)
     # Only return cited, application-owned links. Marker validity is not semantic proof.
     state["evidence"] = {key: state["evidence"][key] for key in dict.fromkeys(references)}
     return _finish(state, "complete")
+
+
+def _recorded_fallback(state: dict) -> tuple[str, list[str]] | None:
+    """Render successful lookups, never the uncited model's claims or inferred totals."""
+    results = state["results"]
+    if not results or any(result["status"] not in {"ok", "not_found"} for _, result in results):
+        return None
+    lines = ["Here are the recorded details from this lookup:"]
+    refs: list[str] = []
+
+    def clean(value: object) -> str:
+        # Stored values cannot add evidence markers or impersonate another output row.
+        return " ".join(str(value).splitlines()).replace("[", "[ ").replace("]", " ]")
+
+    def date(value: object) -> str:
+        if value:
+            try:
+                parsed = datetime.fromisoformat(str(value))
+                if parsed.tzinfo is not None:
+                    return parsed.astimezone(ZoneInfo("Asia/Singapore")).date().isoformat()
+            except ValueError:
+                pass
+        return "unknown"
+
+    def money(currency: object, cents: object) -> str:
+        if not isinstance(currency, str) or type(cents) is not int:
+            return "unknown"
+        major, minor = divmod(abs(cents), 100)
+        return f"{clean(currency)} {'-' if cents < 0 else ''}{major}.{minor:02d}"
+
+    for name, result in results:
+        if result["status"] == "not_found":
+            lines.append("No matching record was returned for this lookup.")
+            continue
+        data = result["data"]
+        items = data.get("items", [])
+        records = ([data] if "order_id" in data or "product_id" in data else []) + items
+        if name == "search_products" and items:
+            lines.append("Product candidates:")
+        if not records:
+            lines.append("No rows were returned for this lookup.")
+        for record in records:
+            row_refs = []
+            parts = []
+            for kind in ("order", "product"):
+                entity = record.get(f"{kind}_id")
+                if entity is None and kind == "order" and name == "get_order":
+                    entity = data.get("order_id")
+                if entity is not None:
+                    reference = f"{kind}:{entity}"
+                    if reference not in state["evidence"]:
+                        return None
+                    row_refs.append(reference)
+                    parts.append(f"{kind.title()} {entity}")
+                    if reference not in refs:
+                        refs.append(reference)
+            if not row_refs:
+                return None
+            label = record.get("raw_name") or record.get("canonical_name")
+            if label:
+                parts.append(clean(label))
+            if record.get("retailer_name"):
+                parts.append(f"from {clean(record['retailer_name'])}")
+            if "purchase_date" in record:
+                parts.append(f"purchase date {date(record['purchase_date'])}")
+            if "status" in record:
+                parts.append(f"status {clean(record['status'])}")
+            currency = record.get("currency", data.get("currency"))
+            if "total_cents" in record:
+                parts.append(f"total {money(currency, record['total_cents'])}")
+            if "line_number" in record:
+                parts.append(f"line {clean(record['line_number'])}")
+            if "quantity" in record:
+                quantity = record["quantity"]
+                quantity_text = "unknown" if quantity is None else clean(quantity)
+                unit = f" {clean(record['unit'])}" if record.get("unit") else ""
+                parts.append(f"quantity {quantity_text}{unit}")
+            if "net_cents" in record:
+                parts.append(f"line value {money(currency, record['net_cents'])}")
+            lines.append(" — ".join(parts) + " " + " ".join(f"[[{ref}]]" for ref in row_refs))
+        if name == "search_products" and (len(items) > 1 or result["truncated"]):
+            lines.append("Which product do you mean?")
+        if result["truncated"]:
+            lines.append("This lookup is partial; ask for the next page to see more recorded rows.")
+    return "\n".join(lines), refs
 
 
 async def _drive(
@@ -147,9 +251,9 @@ async def _drive(
                 ],
             }
         )
-        for call, arguments in zip(calls, validated, strict=True):
+        for position, (call, arguments) in enumerate(zip(calls, validated, strict=True)):
             key = encode_result({"name": call["name"], "arguments": arguments})
-            call_id = f"{state['model_requests']}:{call['id']}"
+            call_id = f"{state['model_requests']}:{position}"
             await publish(
                 {
                     "type": "tool",
@@ -170,6 +274,9 @@ async def _drive(
             if result["status"] == "error":
                 return _finish(state, "incomplete", result["data"]["code"])
             state["evidence"].update({e["id"]: e for e in result["evidence"]})
+            if key not in state["result_keys"]:
+                state["results"].append((call["name"], result))
+                state["result_keys"].add(key)
             current.append(
                 {"role": "tool", "tool_name": call["name"], "content": encode_result(result)}
             )
@@ -209,6 +316,8 @@ async def run_attempt(
         "model_requests": 0,
         "tool_calls": 0,
         "reads": [],
+        "results": [],
+        "result_keys": set(),
     }
     if type(question) is not str or not question.strip() or len(question) > 4000:
         return _finish(state, "rejected", "invalid_question")
@@ -222,6 +331,13 @@ async def run_attempt(
         return _finish(state, "rejected", "cancelled")
     if _faulted or not _SLOT.acquire(blocking=False):
         return _finish(state, "rejected", availability())
+    if _GREETING.fullmatch(question.strip()):
+        _SLOT.release()
+        state["text"] = "Hello! Ask me about your recorded orders or products."
+        result = _finish(state, "complete")
+        if emit is not None:
+            await emit({"type": "terminal", **result})
+        return result
     stopped = stop if stop is not None else asyncio.Event()
     terminal = False
     deadline = asyncio.get_running_loop().time() + WORK_SECONDS

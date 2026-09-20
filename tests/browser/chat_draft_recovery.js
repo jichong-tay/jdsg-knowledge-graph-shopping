@@ -30,6 +30,14 @@
     }
     let p = await page();
     p.emit({type: 'draft', id: p.ws.sent.at(-1).id, conversation_id: 'draft-one'});
+    const snapshotId = p.ws.sent.at(-1).id;
+    const conversation = {id: 'draft-one', title: 'First question', model: 'synthetic', version: 1};
+    p.emit({type: 'snapshot', id: snapshotId, conversation, items: [{id: 7, version: 1, message_id: 'm', question: 'Q', text: 'Ungrounded', status: 'failed', code: 'missing_evidence', tools: [], evidence: []}], next_cursor: null});
+    if (!p.w.document.body.textContent.includes('verified purchase link')) throw new Error('Missing evidence notice behavior');
+    p.emit({type: 'snapshot', id: snapshotId, conversation: {...conversation, version: 2}, items: [{id: 8, version: 1, message_id: 'n', question: 'Q2', text: 'Unavailable', status: 'failed', code: 'context_unavailable', tools: [], evidence: []}], next_cursor: null});
+    if (!p.w.document.body.textContent.includes('Context could not be prepared')) throw new Error('Context notice behavior');
+    p.close(); storage.clear(); p = await page();
+    p.emit({type: 'draft', id: p.ws.sent.at(-1).id, conversation_id: 'draft-one'});
     function type(p, text) { const input = p.w.document.getElementById('chat-message'); input.value = text; input.dispatchEvent(new p.w.Event('input')); }
     type(p, 'First question');
     p.w.document.getElementById('chat-composer').dispatchEvent(new p.w.Event('submit', {cancelable: true}));

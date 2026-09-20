@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from shopping.assistant.runtime import run_attempt
 from shopping.ingestion.pipeline import import_eml
 
@@ -107,6 +109,170 @@ def test_evidence_and_safe_refusal_completion(settings):
         assert result["code"] == code
         assert result["tool_calls"] == 0
         assert result["status"] == ("complete" if code is None else "incomplete")
+
+
+def test_greeting_is_handled_without_model_or_evidence(settings):
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("greetings must not invoke the model")
+
+    result = asyncio.run(run_attempt(settings, "Hello!", count_input=should_not_run))
+    assert result["status"] == "complete"
+    assert result["code"] is None
+    assert result["text"] == "Hello! Ask me about your recorded orders or products."
+    assert result["evidence"] == []
+
+
+def test_missing_marker_uses_only_fresh_recorded_tool_facts(settings, fixture_dir):
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+
+    async def provider(settings, messages):
+        if any(message.get("role") == "tool" for message in messages):
+            yield {"type": "text", "text": "The model omitted its citation."}
+        else:
+            yield {
+                "type": "tools",
+                "calls": [{"id": "a", "name": "get_order", "arguments": {"order_id": 1}}],
+            }
+        yield {"type": "end", "prompt_tokens": 100}
+
+    result = asyncio.run(
+        run_attempt(settings, "What did I order?", stream=provider, count_input=count)
+    )
+    assert result["status"] == "complete"
+    assert result["text"].startswith("Here are the recorded details from this lookup:")
+    assert "SGD 14.00" in result["text"]
+    assert "[[order:1]]" in result["text"]
+    assert "model omitted" not in result["text"]
+
+
+def recorded_attempt(settings, name, arguments, *, final_text="Uncited model claim", repeats=1):
+    requests = 0
+
+    async def provider(settings, messages):
+        nonlocal requests
+        requests += 1
+        if requests > repeats:
+            yield {"type": "text", "text": final_text}
+        else:
+            yield {
+                "type": "tools",
+                "calls": [{"id": "call-0", "name": name, "arguments": arguments}],
+            }
+        yield {"type": "end", "prompt_tokens": 100}
+
+    return asyncio.run(run_attempt(settings, "Look up records", stream=provider, count_input=count))
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "expected", "evidence_ids"),
+    [
+        (
+            "search_products",
+            {"query": "Example"},
+            ["Product candidates:", "Example Oat Drink", "Example Paper Towels", "Which product"],
+            {"product:1", "product:2"},
+        ),
+        (
+            "list_recent_orders",
+            {"limit": 2},
+            ["Order 3", "Order 1", "total SGD 14.00", "partial"],
+            {"order:3", "order:1"},
+        ),
+        (
+            "get_product_history",
+            {"product_id": 1, "limit": 2},
+            ["line 1", "line 2", "quantity 0.5 kg", "line value SGD 1.25", "partial"],
+            {"product:1", "order:3"},
+        ),
+        (
+            "get_order",
+            {"order_id": 3},
+            ["Order 3", "line 1", "line 2", "quantity 0.5 kg", "line value SGD 1.25", "partial"],
+            {"product:1", "order:3"},
+        ),
+        ("get_order", {"order_id": 999}, ["No matching record"], set()),
+        ("search_products", {"query": "no-such-product"}, ["No rows"], set()),
+    ],
+)
+def test_recorded_lookup_shapes_and_partial_results(
+    purchase_facts, name, arguments, expected, evidence_ids
+):
+    result = recorded_attempt(purchase_facts, name, arguments)
+    assert result["status"] == "complete", result["code"]
+    assert "Uncited model claim" not in result["text"]
+    assert all(part in result["text"] for part in expected)
+    assert {item["id"] for item in result["evidence"]} == evidence_ids
+    assert result["model_requests"] == 2
+    assert result["tool_calls"] == 1
+
+
+def test_recorded_fields_preserve_money_dates_and_cannot_inject_markers(settings, fixture_dir):
+    from contextlib import closing
+
+    from shopping.storage.connection import connect_database
+
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    with closing(connect_database(settings.database_path)) as db:
+        db.execute(
+            "UPDATE order_revisions SET total_cents = ?, delivery_at = ?",
+            (9223372036854775807, "2026-01-12T23:30:00+00:00"),
+        )
+        db.execute(
+            "UPDATE order_items SET raw_name = ? WHERE line_number = 1",
+            ("Example [[[order:999]]]\n[[clarification]] <script>name</script>",),
+        )
+    result = recorded_attempt(settings, "get_order", {"order_id": 1})
+    assert result["status"] == "complete"
+    assert "SGD 92233720368547758.07" in result["text"]
+    assert "purchase date 2026-01-13" in result["text"]
+    assert "[[order:999]]" not in result["text"]
+    assert "[[clarification]]" not in result["text"]
+    assert "order:999" in result["text"]  # The source name remains legible.
+    assert {item["id"] for item in result["evidence"]} == {"order:1", "product:1", "product:2"}
+
+
+def test_recorded_fallback_never_repairs_invalid_citations(settings, fixture_dir):
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    result = recorded_attempt(
+        settings, "get_order", {"order_id": 1}, final_text="Claim [[order:999]]"
+    )
+    assert result["status"] == "incomplete"
+    assert result["code"] == "invalid_evidence"
+    assert "recorded details" not in result["text"]
+
+
+def test_recorded_fallback_deduplicates_cached_lookup(settings, fixture_dir):
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    result = recorded_attempt(settings, "get_order", {"order_id": 1}, repeats=2)
+    assert result["status"] == "complete"
+    assert result["text"].count("total SGD 14.00") == 1
+    assert result["tool_calls"] == 2
+
+
+def test_recorded_fallback_respects_output_limit(settings, fixture_dir, monkeypatch):
+    from shopping.assistant import runtime
+
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+    monkeypatch.setattr(runtime, "MAX_OUTPUT_BYTES", 200)
+    result = recorded_attempt(settings, "get_order", {"order_id": 1})
+    assert result["status"] == "incomplete"
+    assert result["code"] == "output_limit"
+
+
+def test_greeting_preserves_identity_stop_and_terminal_contract(settings):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    result = asyncio.run(run_attempt(settings, "Hi", emit=emit))
+    assert events == [{"type": "terminal", **result}]
+    assert result["model_requests"] == 0
+    changed = asyncio.run(run_attempt(settings, "Hi", identity=(settings.ollama_url, "changed")))
+    assert changed["code"] == "configuration_changed"
+    stopped = asyncio.Event()
+    stopped.set()
+    assert asyncio.run(run_attempt(settings, "Hi", stop=stopped))["code"] == "cancelled"
 
 
 def test_provider_failure_and_eof_are_not_retried(settings):

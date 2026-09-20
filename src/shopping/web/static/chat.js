@@ -138,8 +138,11 @@
           failed: "Response failed · incomplete", stopped: "Stopped · incomplete", interrupted: "Interrupted by service restart · incomplete"};
         const reason = {provider_unavailable: "Ollama is unavailable. Try again when it is running.",
           accounting_unsupported: "The model configuration needs verification.",
+          missing_evidence: "The response did not include a verified purchase link. Retry the question.",
+          context_unavailable: "Context could not be prepared for this response. Retry the question.",
           deadline: "The response reached its time limit.",
-          cleanup_fault: "Cleanup could not be confirmed. The service needs to restart."}[attempt.code];
+          cleanup_fault: "Cleanup could not be confirmed. The service needs to restart.",
+          runtime_failure: "The response could not be completed. Retry the question."}[attempt.code];
         assistant.append(element("p", (labels[attempt.status] || "Incomplete") + (reason ? ". " + reason : ""), "response-notice"));
       }
       nodes.push(assistant);

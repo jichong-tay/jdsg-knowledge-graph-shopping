@@ -270,6 +270,14 @@ Send a question, expand purchase-history activity, and open an evidence link to
 inspect the recorded order or product. One response runs globally. Stop preserves
 an incomplete answer; Retry explicitly starts a new attempt. Rename and delete
 are available from the conversation header. Deletion waits for active cleanup.
+Simple greeting-only messages are answered locally without invoking Ollama.
+If the model returns prose without a verified evidence marker after a successful
+fresh read, Chat discards that prose and shows a clearly labelled recorded-results
+summary built from the tool fields and application-owned evidence links. It never
+turns ungrounded prose into a factual answer. Context preparation failures are
+shown separately from provider outages.
+Empty lookups report that no rows were returned; partial results stay labelled
+partial, and multiple product candidates remain a choice for the user.
 The history rail becomes a Conversations dialog on small screens.
 Chat fills the viewport below the application header, keeping the composer at the
 bottom without scrolling the outer page. Message history and the conversation list

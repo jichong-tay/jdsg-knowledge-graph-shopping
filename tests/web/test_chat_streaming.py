@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+import pytest
 from starlette.testclient import TestClient
 
 from shopping.assistant import conversations as saved
@@ -84,6 +85,77 @@ def test_send_is_saved_before_generation_and_retransmission_does_not_repeat(sett
             assert calls == [True]
             socket.send_json({**command, "text": "Different"})
             assert receive(socket, "error")["code"] == "command_conflict"
+
+
+@pytest.mark.parametrize(
+    ("answer_text", "expected_prefix"),
+    [
+        (
+            "An unsupported claim about your purchases.",
+            "Here are the recorded details from this lookup:",
+        ),
+        ("The recorded total is SGD 14.00. [[order:1]]", "The recorded total is SGD 14.00."),
+    ],
+)
+def test_real_runtime_tool_answer_is_saved_and_restored(
+    settings, fixture_dir, answer_text, expected_prefix
+):
+    from functools import partial
+
+    from shopping.assistant.runtime import run_attempt
+    from shopping.ingestion.pipeline import import_eml
+
+    import_eml(fixture_dir / "fairprice_order_minimal.eml", settings)
+
+    async def count(messages):
+        return 100
+
+    async def provider(settings, messages):
+        if messages[-1]["role"] == "tool":
+            yield {"type": "text", "text": answer_text}
+        else:
+            yield {
+                "type": "tools",
+                "calls": [{"id": "call-0", "name": "list_recent_orders", "arguments": {}}],
+            }
+        yield {"type": "end", "prompt_tokens": 100}
+
+    runner = partial(run_attempt, stream=provider, count_input=count)
+    configured = replace(settings, app_origin=ORIGIN)
+    with TestClient(create_app(configured, chat_runner=runner), base_url=ORIGIN) as client:
+        with connect(client) as socket:
+            initialize(client, socket)
+            cid = draft(socket)
+            socket.send_json(
+                {
+                    "v": 1,
+                    "type": "submit",
+                    "id": "uncited-recent",
+                    "conversation_id": cid,
+                    "text": "What is my latest order?",
+                }
+            )
+            aid = receive(socket, "ack")["outcome"]["attempt_id"]
+            for _ in range(20):
+                attempt = receive(socket, "update")["attempt"]
+                if attempt["status"] in {"complete", "failed"}:
+                    break
+            assert attempt["status"] == "complete", attempt.get("code")
+            assert attempt["text"].startswith(expected_prefix)
+            assert "SGD 14.00" in attempt["text"]
+            assert "unsupported claim" not in attempt["text"]
+            assert any(item["id"] == "order:1" for item in attempt["evidence"])
+            receive(socket, "availability")
+        with connect(client) as resumed:
+            initialize(client, resumed)
+            resumed.send_json(
+                {"v": 1, "type": "subscribe", "id": "restore", "conversation_id": cid}
+            )
+            restored = receive(resumed, "snapshot")["items"][0]
+            assert restored["id"] == aid
+            assert restored["status"] == "complete"
+            assert restored["text"] == attempt["text"]
+            assert restored["evidence"] == attempt["evidence"]
 
 
 def test_disconnect_continues_and_stop_retry_targets_saved_attempt(settings):

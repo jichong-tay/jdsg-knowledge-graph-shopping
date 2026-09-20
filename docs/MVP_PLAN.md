@@ -814,6 +814,12 @@ evidence links in the application. Clean provider completion, no pending tools, 
 valid required evidence references are necessary for completion, but cannot prove
 every sentence is correct; the fixed evaluation set must test semantic grounding.
 Cut-off output, exhausted limits, and invalid references remain incomplete.
+When a provider response lacks a valid evidence marker after successful fresh tool
+reads, the generated prose is discarded and the application may produce a clearly
+labelled recorded-results summary from those structured fields, with only
+application-owned evidence markers. It never aggregates pages, selects among
+candidates, or repairs failed/cancelled/deadline attempts. Context preparation
+failures are surfaced as a distinct retryable notice; no automatic replay occurs.
 
 No automatic model/database replay or hidden final-answer repair is allowed. Preserve
 partial output and offer explicit Retry under the accepted lifecycle. Browser

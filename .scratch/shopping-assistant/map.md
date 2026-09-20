@@ -8,7 +8,7 @@ Reach an Ollama-only chatbot MVP on the existing homelab deployment: open the de
 
 ## Notes
 
-- Current phase: Wayfinder planning is complete and tickets 14–17 have local implementations recorded in their issue files. Ticket 18 remains the host verification checkpoint; deployment and host verification are still pending. Treat this map as planning context and implementation evidence, not proof of deployment.
+- Current phase: The original Wayfinder planning round is complete and tickets 14–17 have local implementations recorded in their issue files. The 20 September Chat investigation has reopened remediation decisions; the operator currently authorizes ticket preparation only, without fixes. Ticket 18 remains the host verification checkpoint; deployment and host verification are still pending. Treat this map as planning context and implementation evidence, not proof of deployment.
 - Use one application-owned Python agent loop and local Ollama for this MVP. Cloud support and orchestration-library comparisons are deferred to a later phase.
 - Learning-friendly MVP: prefer small Python functions and explicit state transitions in the existing application; no general-purpose messaging platform, extra infrastructure, or speculative abstractions. Retain the accepted data/privacy/recovery safeguards.
 - Host privately on loopback with remote access only through existing Tailscale Serve; no public app endpoint, Funnel, or port forwarding. Browser origin/session protections do not introduce user accounts.
@@ -32,6 +32,8 @@ Reach an Ollama-only chatbot MVP on the existing homelab deployment: open the de
 - [Source layout plan](plans/source-layout.md) — completed package and planning-folder reorganization, with verification results.
 - [Local model selection](research/local-model-selection.md) — dated research background for the model choice.
 - [Chat UI options](research/chat-ui-options.md) — dated research background for the interface choice.
+- [Chat investigation handoff](research/chat-investigation-handoff.md) — recorded lifecycle and answer-quality findings, synthetic probes, and evidence limits; read before the remediation proposal.
+- [Chat reliability and useful purchase answers — Implementation Plan](plans/chat-reliability-and-answer-quality.md) — unaccepted proposal that predates the broader lifecycle review; its fifth Read Tool and implementation remain pending decisions.
 
 ## Decisions so far
 
@@ -72,8 +74,10 @@ coverage and release checkpoints. Each child task supplies file boundaries and c
 4. [17 — Build the Chat UI, streaming and recovery](issues/17-build-chat-ui-and-streaming.md) — implemented locally; protected UI deployment verification remains pending.
 5. [18 — Verify the homelab Shopping Assistant MVP](issues/18-verify-homelab-chat-mvp.md) — current verification checkpoint; do not claim completion until host checks pass.
 
-No unresolved planning branch remains. Actual model behavior and host checks are
-implementation evidence still to collect, not completed by resolving design tickets.
+Remediation planning is open again following the Chat investigation; find the
+unclaimed decision ticket through the child issues' `Type:` and `Status:` fields.
+The accepted four-Read-Tool scope remains unchanged. Actual model behavior and host
+checks remain evidence to collect, not completed by resolving design tickets.
 
 ## Out of scope
 
